@@ -69,10 +69,15 @@ pub(crate) struct ChangeSession {
 }
 
 impl ChangeSession {
-    pub(crate) fn begin(workspace_root: &Path, scope: ChangeScope) -> Self {
+    pub(crate) fn begin(workspace_root: &Path, mut scope: ChangeScope) -> Self {
         let workspace_root = workspace_root
             .canonicalize()
             .unwrap_or_else(|_| workspace_root.to_path_buf());
+        for target in &mut scope.targets {
+            if let Ok(canon) = target.path.canonicalize() {
+                target.path = canon;
+            }
+        }
         let before = snapshot::collect_snapshot(&workspace_root, &scope.targets);
         Self {
             workspace_root,
