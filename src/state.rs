@@ -2,7 +2,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -117,6 +117,7 @@ impl UsageTotals {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UsageLedgerEntry<'a> {
+    event_id: String,
     timestamp_ms: u64,
     input_tokens: u64,
     output_tokens: u64,
@@ -631,22 +632,38 @@ fn append_usage_ledger_entry(
     fs::create_dir_all(parent)?;
 
     let entry = UsageLedgerEntry {
+        event_id: Uuid::new_v4().to_string(),
         timestamp_ms: now_unix_millis().min(u64::MAX as u128) as u64,
         input_tokens,
         output_tokens,
         bucket: CURRENT_USAGE_BUCKET,
     };
-    let line = serde_json::to_string(&entry).map_err(std::io::Error::other)?;
+    let mut line = serde_json::to_vec(&entry).map_err(std::io::Error::other)?;
+    line.push(b'\n');
 
     let mut options = OpenOptions::new();
-    options.create(true).append(true);
+    options.create(true).read(true).append(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
     let mut file = options.open(path)?;
-    writeln!(file, "{line}")?;
+
+    // Production CatDesk is a single daemon, so this ledger has one writer.
+    // If a previous crash left a partial JSON row, isolate it before appending
+    // the next complete event so consumers lose at most the interrupted row.
+    let len = file.metadata()?.len();
+    if len > 0 {
+        file.seek(SeekFrom::End(-1))?;
+        let mut last_byte = [0u8; 1];
+        file.read_exact(&mut last_byte)?;
+        if last_byte[0] != b'\n' {
+            file.write_all(b"\n")?;
+        }
+    }
+
+    file.write_all(&line)?;
     Ok(())
 }
 
@@ -1552,6 +1569,11 @@ mod tests {
         assert_eq!(first["outputTokens"], 8);
         assert_eq!(first["bucket"], CURRENT_USAGE_BUCKET);
         assert!(first["timestampMs"].as_u64().is_some_and(|value| value > 0));
+        assert!(
+            first["eventId"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
         assert!(first.get("totalTokens").is_none());
 
         let second: serde_json::Value =
@@ -1559,12 +1581,40 @@ mod tests {
         assert_eq!(second["inputTokens"], 5);
         assert_eq!(second["outputTokens"], 7);
         assert_eq!(second["bucket"], CURRENT_USAGE_BUCKET);
+        assert_ne!(first["eventId"], second["eventId"]);
 
         let all_time = app.all_time_usage_totals();
         assert_eq!(all_time.tool_input_tokens, 17);
         assert_eq!(all_time.tool_output_tokens, 15);
         assert_eq!(all_time.total_tokens, 32);
         assert_eq!(all_time.tool_call_count, 2);
+
+        let _ = std::fs::remove_file(ledger_path);
+        let _ = std::fs::remove_file(config_path);
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn record_turn_usage_isolates_a_truncated_ledger_tail() {
+        let (mut app, workspace, config_path) = test_app("catdesk-usage-ledger-tail");
+        app.record_turn_usage(12, 8);
+
+        let ledger_path = workspace.join(USAGE_LEDGER_FILE_NAME);
+        let mut file = OpenOptions::new().append(true).open(&ledger_path).unwrap();
+        file.write_all(b"{\"timestampMs\":").unwrap();
+        drop(file);
+
+        app.record_turn_usage(5, 7);
+
+        let ledger = std::fs::read_to_string(&ledger_path).expect("read usage ledger");
+        let lines = ledger.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 3);
+        assert!(serde_json::from_str::<serde_json::Value>(lines[0]).is_ok());
+        assert!(serde_json::from_str::<serde_json::Value>(lines[1]).is_err());
+        let recovered: serde_json::Value =
+            serde_json::from_str(lines[2]).expect("parse row after truncated tail");
+        assert_eq!(recovered["inputTokens"], 5);
+        assert_eq!(recovered["outputTokens"], 7);
 
         let _ = std::fs::remove_file(ledger_path);
         let _ = std::fs::remove_file(config_path);

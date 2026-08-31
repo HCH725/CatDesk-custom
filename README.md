@@ -96,8 +96,10 @@ Production CatDesk must expose its existing MCP token accounting as a minimal lo
 Required semantics:
 
 - Keep `config.toml` usage totals as the existing cumulative state; the ledger supplements rather than replaces them.
-- Append one JSONL row for each recorded MCP tool call using the stable fields `timestampMs`, `inputTokens`, `outputTokens`, and `bucket`.
+- Append one JSONL row for each recorded MCP tool call using the stable fields `eventId`, `timestampMs`, `inputTokens`, `outputTokens`, and `bucket`.
+- `eventId` must be unique per recorded event and remain the stable downstream deduplication identity even if ledger rows are moved or reordered.
 - Do not duplicate derived totals such as `totalTokens` in each row.
+- Production assumes the CatDesk daemon is the sole ledger writer. If a crash leaves a truncated final row, the next append must isolate that fragment with a newline before writing the next complete event.
 - A ledger write failure must be logged as a warning and must not fail the MCP tool response.
 - Newly created ledger files must be private to the user on Unix-like systems (`0600`).
 - Do not fabricate timestamped history for usage that predates the ledger. Historical cumulative totals remain in `config.toml`.

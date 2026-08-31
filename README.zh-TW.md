@@ -96,8 +96,10 @@ Production CatDesk 必須把既有 MCP token accounting 以最小化的本機 ev
 必須保留的語意：
 
 - `config.toml` 既有累積 usage totals 繼續保存；ledger 是補充，不取代原本 totals。
-- 每次記錄 MCP tool call 時 append 一行 JSONL，穩定欄位為 `timestampMs`、`inputTokens`、`outputTokens`、`bucket`。
+- 每次記錄 MCP tool call 時 append 一行 JSONL，穩定欄位為 `eventId`、`timestampMs`、`inputTokens`、`outputTokens`、`bucket`。
+- `eventId` 必須對每個 recorded event 唯一；即使 ledger row 被移動或重排，也要維持下游 dedup 的穩定 identity。
 - 每行不要重複保存可推導的 `totalTokens`。
+- Production 假設 CatDesk daemon 是 ledger 唯一 writer；若 crash 留下截斷的最後一行，下次 append 必須先補 newline 隔離殘片，再寫入下一個完整 event。
 - ledger 寫入失敗只能記 warning，不得讓 MCP tool response 跟著失敗。
 - Unix-like 系統中新建立的 ledger 檔案必須為使用者私有（`0600`）。
 - 不得為 ledger 上線以前的累積 usage 虛構 timestamp 歷史；舊累積 totals 繼續留在 `config.toml`。

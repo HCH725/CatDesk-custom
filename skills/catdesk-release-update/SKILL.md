@@ -61,7 +61,7 @@ Derive this dynamically from each release's notes; never treat a previous releas
 - `diff` exit code 1 means expected differences when comparing changed source; do not treat that as deploy failure.
 - Restarting the daemon invalidates external command job handles; that is expected and does not by itself mean the upgrade failed.
 - The ExpansionDrive gate is production-critical, not an optional convenience test.
-- The local token ledger is production runtime state, not repository content. Preserve the append-only `timestampMs` / `inputTokens` / `outputTokens` / `bucket` contract across upgrades and never backfill fabricated timestamps.
+- The local token ledger is production runtime state, not repository content. Preserve the append-only `eventId` / `timestampMs` / `inputTokens` / `outputTokens` / `bucket` contract across upgrades; keep `eventId` stable and unique per event, isolate a truncated crash-tail before the next append, and never backfill fabricated timestamps.
 - Acceptance must be based on active production-surface readbacks, not only source tests or child-agent claims.
 
 ## Production activation incident guardrails (2026-08-31)
