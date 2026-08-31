@@ -30,9 +30,18 @@
 5. ChatGPT 判讀 audit 結果，決定 remediation 或 advance。
 6. 若需要修補，由 Hermes `default` remediation，再重新 audit。
 
-Hermes 每次處理 CatDesk 升級前，都必須先讀本 README 與本機 skill：
+本 repo 用兩層定義 CatDesk 更新的 authority：
+
+- **README（本檔）是 canonical behavioral contract** — 無論哪一版 release，production CatDesk 都必須維持的行為契約。
+- **`skills/catdesk-release-update/SKILL.md`（repo-tracked）是 canonical operational procedure** — Hermes 實際執行更新的方式。
+
+本機 Hermes runtime entrypoint
 
 `~/.hermes/skills/software-development/catdesk-release-update/SKILL.md`
+
+只是 symlink entrypoint，必須指向上面 repo-tracked skill。若 README 與 Skill 衝突，以 README 為準：立即停止 upgrade，先把 Skill 對齊 README，再繼續。
+
+每次升級前，Hermes 必須先 fetch/sync 本 repo、確認 `origin/main`、讀完本 README 與 repo-tracked skill、確認 runtime skill entrypoint 指向 repo-tracked 檔案，然後才查目前 accepted `vX.Y.Z-custom.N` tag 與 rollback 版本。不得靠記憶或舊 worktree。
 
 ## 目前 downstream custom contract
 
@@ -115,8 +124,8 @@ src/workspace_tools.rs
 
 當漢秦哥批准評估新的 stable CatDesk release：
 
-1. 先讀本 README 與 `catdesk-release-update/SKILL.md`。
-2. 確認目前 accepted downstream tag、repo clean state 與 rollback 版本。
+1. 先 fetch/sync 本 repo，確認 local `main` 與 `origin/main` 一致，再讀本 README 與 repo-tracked `skills/catdesk-release-update/SKILL.md`。
+2. 確認 local runtime skill entrypoint 指向 repo-tracked skill，再以 tag/README 讀出目前 accepted downstream tag（`vX.Y.Z-custom.N`）、repo clean state 與 rollback 版本；不得靠記憶或舊 worktree。
 3. Fetch 官方 upstream tags，記錄新 tag、commit、release notes、API/schema/runtime changes。
 4. 一律從 **新的 upstream stable tag** 開始，不得從舊 custom source 整份複製。
 5. 比較目前 accepted downstream behavior 與新版 upstream architecture。
