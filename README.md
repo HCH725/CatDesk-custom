@@ -89,7 +89,21 @@ The downstream behavior in `src/mcp.rs` must continue to distinguish:
 - move destination paths that require write permission;
 - write-boundary failures reported as write-root violations rather than generic workspace failures.
 
-### 5. Preserve upstream release behavior
+### 5. Append-only local usage ledger
+
+Production CatDesk must expose its existing MCP token accounting as a minimal local event ledger at `~/.catdesk/usage.jsonl` for downstream usage consumers.
+
+Required semantics:
+
+- Keep `config.toml` usage totals as the existing cumulative state; the ledger supplements rather than replaces them.
+- Append one JSONL row for each recorded MCP tool call using the stable fields `timestampMs`, `inputTokens`, `outputTokens`, and `bucket`.
+- Do not duplicate derived totals such as `totalTokens` in each row.
+- A ledger write failure must be logged as a warning and must not fail the MCP tool response.
+- Newly created ledger files must be private to the user on Unix-like systems (`0600`).
+- Do not fabricate timestamped history for usage that predates the ledger. Historical cumulative totals remain in `config.toml`.
+- `usage.jsonl` is runtime state and must never be committed to this repository.
+
+### 6. Preserve upstream release behavior
 
 Downstream changes must never erase features introduced by newer upstream releases.
 
@@ -110,11 +124,12 @@ Release-specific checks must be re-derived from the release notes every time ups
 
 ## Current custom source scope
 
-The `v0.5.0` downstream implementation modifies only these upstream source files:
+The `v0.5.0` downstream implementation currently modifies only these upstream source files:
 
 ```text
 src/change_tracking/mod.rs
 src/mcp.rs
+src/state.rs
 src/workspace_tools.rs
 ```
 
@@ -197,7 +212,7 @@ Do **not** commit:
 - `~/.catdesk/config.toml` or any real production config containing local credentials;
 - production launchd plist files or launch wrappers containing environment-specific runtime data;
 - Cloudflare/ngrok credentials or tunnel configuration;
-- runtime logs, restart markers, verification output, command job state, or generated mascot/state files;
+- runtime logs, `~/.catdesk/usage.jsonl`, restart markers, verification output, command job state, or generated mascot/state files;
 - `target/`, compiled binaries, `.dSYM` bundles, backups, temporary build output, or installed production binaries;
 - secrets copied into examples, issues, commit messages, or release notes.
 

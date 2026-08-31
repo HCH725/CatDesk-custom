@@ -43,7 +43,7 @@ Never rely on memory or stale worktrees. Every update must start from fresh repo
 4. Do not copy old source files wholesale over newer source. Preserve upstream release features and adapt to the new architecture.
 5. Keep read and write boundaries separate: read is allowed only under `WORKSPACE_ROOT` plus configured `CATDESK_READ_ROOTS`; write/delete/edit/move is allowed only under `WORKSPACE_ROOT` plus configured `CATDESK_WRITE_ROOTS`. Read permission must never imply write permission.
 6. Use OS path-list semantics for `CATDESK_READ_ROOTS` and `CATDESK_WRITE_ROOTS`. Canonicalize existing paths and parents of missing paths so traversal and symlink escapes cannot leave configured roots. Do not expand monitoring to an entire home or drive without explicit provenance and tests.
-7. Run targeted boundary tests and the relevant upstream suite before building: workspace read/write, external read/write, read-only external root, traversal/symlink escape, change tracking, and release-specific schema behavior.
+7. Run targeted boundary tests and the relevant upstream suite before building: workspace read/write, external read/write, read-only external root, traversal/symlink escape, change tracking, the append-only `~/.catdesk/usage.jsonl` ledger contract, and release-specific schema behavior.
 8. Run formatting and tests, then release-build an arm64 binary. Record upstream tag/commit, downstream diff, official asset digest for provenance, and custom binary SHA256 for production identity. The custom digest must not be reported as the official digest.
 9. Install under a clearly versioned custom path, for example `/Users/hong/.local/share/catdesk/<version>-custom/bin/catdesk`. Keep the previously accepted custom version until the new one is stable.
 10. Timestamp-backup the previous production binary, launcher, plist, and a rollback recipe. Change only the launcher spawn binary path; preserve plist roots and environment. Restart only `com.hong.catdesk`; never modify the Cloudflare tunnel for a CatDesk update.
@@ -61,6 +61,7 @@ Derive this dynamically from each release's notes; never treat a previous releas
 - `diff` exit code 1 means expected differences when comparing changed source; do not treat that as deploy failure.
 - Restarting the daemon invalidates external command job handles; that is expected and does not by itself mean the upgrade failed.
 - The ExpansionDrive gate is production-critical, not an optional convenience test.
+- The local token ledger is production runtime state, not repository content. Preserve the append-only `timestampMs` / `inputTokens` / `outputTokens` / `bucket` contract across upgrades and never backfill fabricated timestamps.
 - Acceptance must be based on active production-surface readbacks, not only source tests or child-agent claims.
 
 ## Production activation incident guardrails (2026-08-31)

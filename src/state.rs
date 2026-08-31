@@ -2,6 +2,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -67,6 +68,7 @@ impl FlowBootstrapProgress {
 
 const APP_CONFIG_DIR_NAME: &str = ".catdesk";
 const APP_CONFIG_FILE_NAME: &str = "config.toml";
+const USAGE_LEDGER_FILE_NAME: &str = "usage.jsonl";
 pub const GPT_5_6_AND_EARLIER_USAGE_BUCKET: &str = "through-gpt-5.6";
 pub const CURRENT_USAGE_BUCKET: &str = GPT_5_6_AND_EARLIER_USAGE_BUCKET;
 /// Bump only when an existing ChatGPT connector must be removed and added again.
@@ -110,6 +112,15 @@ impl UsageTotals {
             .saturating_add(self.tool_output_tokens);
         self
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageLedgerEntry<'a> {
+    timestamp_ms: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+    bucket: &'a str,
 }
 
 #[derive(Deserialize)]
@@ -601,6 +612,44 @@ pub fn app_config_path() -> std::io::Result<PathBuf> {
         .join(APP_CONFIG_FILE_NAME))
 }
 
+fn usage_ledger_path(config_path: &Path) -> std::io::Result<PathBuf> {
+    let parent = config_path.parent().ok_or_else(|| {
+        std::io::Error::other("failed to resolve CatDesk config directory for usage ledger")
+    })?;
+    Ok(parent.join(USAGE_LEDGER_FILE_NAME))
+}
+
+fn append_usage_ledger_entry(
+    config_path: &Path,
+    input_tokens: u64,
+    output_tokens: u64,
+) -> std::io::Result<()> {
+    let path = usage_ledger_path(config_path)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("failed to resolve CatDesk usage ledger directory"))?;
+    fs::create_dir_all(parent)?;
+
+    let entry = UsageLedgerEntry {
+        timestamp_ms: now_unix_millis().min(u64::MAX as u128) as u64,
+        input_tokens,
+        output_tokens,
+        bucket: CURRENT_USAGE_BUCKET,
+    };
+    let line = serde_json::to_string(&entry).map_err(std::io::Error::other)?;
+
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    writeln!(file, "{line}")?;
+    Ok(())
+}
+
 pub fn load_app_config() -> std::io::Result<AppConfig> {
     AppConfig::load_from_path(&app_config_path()?)
 }
@@ -998,6 +1047,15 @@ impl AppState {
             .accumulate(tool_input_tokens, tool_output_tokens, 1);
         self.session_usage_totals
             .accumulate(tool_input_tokens, tool_output_tokens, 1);
+
+        if let Err(error) =
+            append_usage_ledger_entry(&self.config_path, tool_input_tokens, tool_output_tokens)
+        {
+            self.log(
+                "WARN",
+                format!("Failed to append CatDesk usage ledger: {error}"),
+            );
+        }
     }
 
     pub fn apply_server_ui_event(&mut self, event: ServerUiEvent) {
@@ -1474,6 +1532,43 @@ mod tests {
 
         let _ = std::fs::remove_file(config_path);
         let _ = std::fs::remove_dir(workspace);
+    }
+
+    #[test]
+    fn record_turn_usage_appends_jsonl_ledger_entries() {
+        let (mut app, workspace, config_path) = test_app("catdesk-usage-ledger");
+
+        app.record_turn_usage(12, 8);
+        app.record_turn_usage(5, 7);
+
+        let ledger_path = workspace.join(USAGE_LEDGER_FILE_NAME);
+        let ledger = std::fs::read_to_string(&ledger_path).expect("read usage ledger");
+        let lines = ledger.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+
+        let first: serde_json::Value =
+            serde_json::from_str(lines[0]).expect("parse first usage row");
+        assert_eq!(first["inputTokens"], 12);
+        assert_eq!(first["outputTokens"], 8);
+        assert_eq!(first["bucket"], CURRENT_USAGE_BUCKET);
+        assert!(first["timestampMs"].as_u64().is_some_and(|value| value > 0));
+        assert!(first.get("totalTokens").is_none());
+
+        let second: serde_json::Value =
+            serde_json::from_str(lines[1]).expect("parse second usage row");
+        assert_eq!(second["inputTokens"], 5);
+        assert_eq!(second["outputTokens"], 7);
+        assert_eq!(second["bucket"], CURRENT_USAGE_BUCKET);
+
+        let all_time = app.all_time_usage_totals();
+        assert_eq!(all_time.tool_input_tokens, 17);
+        assert_eq!(all_time.tool_output_tokens, 15);
+        assert_eq!(all_time.total_tokens, 32);
+        assert_eq!(all_time.tool_call_count, 2);
+
+        let _ = std::fs::remove_file(ledger_path);
+        let _ = std::fs::remove_file(config_path);
+        let _ = std::fs::remove_dir_all(workspace);
     }
 
     #[test]
