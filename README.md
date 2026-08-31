@@ -140,12 +140,13 @@ When a new stable CatDesk release is approved for evaluation:
 
 The 2026-08-31 `v0.5.0-custom.1` prepare/rollback incident established these mandatory controls:
 
-- Never submit an activation helper as a `KeepAlive` launchd service. A one-shot controller that repeatedly runs `launchctl kickstart -k gui/501/com.hong.catdesk` can create an unbounded restart/browser loop.
-- Use a foreground or one-shot controller only: snapshot launcher/plist hashes, change only the launcher binary, kickstart only CatDesk, poll `launchctl print` and the actual descendant path, and automatically restore the previous launcher on any failed gate.
+- Never submit an activation helper as a `KeepAlive` launchd service; it can create an unbounded restart/browser loop even when the binary itself is healthy.
+- Before activation, establish the owning launchd domain from `launchctl print`, `launchctl list`, and plist registration evidence. Do not hard-code `gui/<uid>` or `user/<uid>`; a missing service in a guessed domain is a domain/registration mismatch, not evidence of a v0.5 runtime regression.
+- Keep the foreground or one-shot controller outside the CatDesk process tree: snapshot launcher/plist hashes, change only the launcher target, provide self-contained rollback, and kickstart only CatDesk.
 - `launchctl kickstart -k` intentionally terminates the child. `SIGTERM` and Expect `spawn id ... not open` are restart evidence, not proof that the new binary crashed.
-- Validate local MCP health/protocol calls separately from the configured public MCP endpoint. A local `200` does not clear an ingress/provider gate; record the public status and provider error code.
-- An `ERR_NGROK_725` bandwidth-limit response is an external provider gate. Keep the previous custom version active and report `PARTIAL/FAIL`; do not touch the Cloudflare tunnel as a workaround.
-- Declare `READY_FOR_ACTIVATION` only after the one-shot controller is absent, the active child path is correct, crash-loop counters remain stable, local and public MCP checks pass, and rollback provenance has been read back.
+- After restart, verify the replacement child path, health/discover, crash-loop stability, root invariants, and Cloudflare continuity.
+- Validate local MCP health/protocol calls separately from the configured public MCP endpoint. When Cloudflare is the active public path, a stale or legacy ngrok endpoint quota/error is only a stale probe: it is not production ingress evidence and must not drive rollback or any Cloudflare change.
+- Declare `READY_FOR_ACTIVATION` only after the one-shot controller is absent, the intended child is verified, the crash-loop gate is stable, local and active-public MCP gates pass, and rollback provenance has been read back.
 
 ## Acceptance checklist
 
