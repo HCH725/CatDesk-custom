@@ -89,7 +89,23 @@ Change tracking 必須以 canonicalized target 建立 snapshot，避免 external
 - move destination：需要 write permission；
 - write boundary 失敗時，要回報 write-root violation，而不是退化成一般 workspace error。
 
-### 5. Upstream 新功能不能被 custom 覆蓋掉
+### 5. Append-only 本機 usage ledger
+
+Production CatDesk 必須把既有 MCP token accounting 以最小化的本機 event ledger 暴露在 `~/.catdesk/usage.jsonl`，供下游 usage consumer 使用。
+
+必須保留的語意：
+
+- `config.toml` 既有累積 usage totals 繼續保存；ledger 是補充，不取代原本 totals。
+- 每次記錄 MCP tool call 時 append 一行 JSONL，穩定欄位為 `eventId`、`timestampMs`、`inputTokens`、`outputTokens`、`bucket`。
+- `eventId` 必須對每個 recorded event 唯一；即使 ledger row 被移動或重排，也要維持下游 dedup 的穩定 identity。
+- 每行不要重複保存可推導的 `totalTokens`。
+- Production 假設 CatDesk daemon 是 ledger 唯一 writer；若 crash 留下截斷的最後一行，下次 append 必須先補 newline 隔離殘片，再寫入下一個完整 event。
+- ledger 寫入失敗只能記 warning，不得讓 MCP tool response 跟著失敗。
+- Unix-like 系統中新建立的 ledger 檔案必須為使用者私有（`0600`）。
+- 不得為 ledger 上線以前的累積 usage 虛構 timestamp 歷史；舊累積 totals 繼續留在 `config.toml`。
+- `usage.jsonl` 是 runtime state，絕對不能 commit 到本 repository。
+
+### 6. Upstream 新功能不能被 custom 覆蓋掉
 
 Downstream port 不能為了保留舊 custom 而把新版 upstream 功能洗掉。
 
@@ -110,11 +126,12 @@ Downstream port 不能為了保留舊 custom 而把新版 upstream 功能洗掉�
 
 ## 目前 custom source scope
 
-`v0.5.0` downstream 目前只修改 upstream 的三個 source files：
+`v0.5.0` downstream 目前只修改 upstream 的四個 source files：
 
 ```text
 src/change_tracking/mod.rs
 src/mcp.rs
+src/state.rs
 src/workspace_tools.rs
 ```
 
@@ -195,7 +212,7 @@ Upstream 與 downstream artifact identity 必須分開：
 - `~/.catdesk/config.toml` 或任何包含真實 credential 的 production config；
 - 真實 production launchd plist / launch wrapper；
 - Cloudflare/ngrok credential 或 tunnel config；
-- runtime logs、restart markers、verification output、command job state、generated mascot/state files；
+- runtime logs、`~/.catdesk/usage.jsonl`、restart markers、verification output、command job state、generated mascot/state files；
 - `target/`、compiled binaries、`.dSYM`、backup、temporary build output、installed production binary；
 - 把 secrets 複製到 examples、issues、commit messages 或 release notes。
 
