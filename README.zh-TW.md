@@ -134,7 +134,18 @@ src/workspace_tools.rs
 13. 只重啟 CatDesk service，再跑 production-surface acceptance。
 14. ExpansionDrive I/O、path security 或必要 upstream feature 任一失敗，立刻 rollback，狀態只能是 **PARTIAL/FAIL**，不能宣告 PASS。
 15. 必須交給 `auditor` 做獨立 review。
-16. 全部通過後，才 merge 到 `main`，並建立新的 `vX.Y.Z-custom.N` tag。
+16. 全部通過與 audit 後，才 merge 到 `main`，並建立新的 `vX.Y.Z-custom.N` tag。
+
+## Production activation 事故防線
+
+2026-08-31 `v0.5.0-custom.1` prepare/rollback 事故確立以下必要控制：
+
+- 絕不能把 activation helper 提交成 `KeepAlive` launchd service。會反覆執行 `launchctl kickstart -k gui/501/com.hong.catdesk` 的 one-shot controller 若被 KeepAlive 包住，會形成無限 restart／瀏覽器重開迴圈。
+- 只能使用 foreground 或 one-shot controller：先快照 launcher/plist hash，只改 launcher binary，僅 kickstart CatDesk，輪詢 `launchctl print` 與實際 descendant path；任一 gate 失敗就自動還原前一版 launcher。
+- `launchctl kickstart -k` 本來就會終止 child；`SIGTERM` 與 Expect `spawn id ... not open` 是重啟證據，不是新 binary crash 的證明。
+- local MCP health/protocol 與設定的 public MCP endpoint 必須分開驗證。local `200` 不代表 ingress/provider gate 通過；要記錄 public status 與 provider error code。
+- `ERR_NGROK_725` bandwidth-limit 是外部 provider gate；保持前一個 custom 版本運行並回報 `PARTIAL/FAIL`，不可拿 Cloudflare tunnel 當 workaround。
+- 只有在 one-shot controller 已不存在、active child path 正確、crash-loop counter 穩定、local 與 public MCP 都通過，且 rollback provenance 已讀回後，才可宣告 `READY_FOR_ACTIVATION`。
 
 ## Acceptance checklist
 

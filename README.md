@@ -136,6 +136,17 @@ When a new stable CatDesk release is approved for evaluation:
 15. Run an independent `auditor` review before declaring the new downstream release accepted.
 16. Only after acceptance and audit, merge the result into `main` and create the next `vX.Y.Z-custom.N` tag.
 
+## Production activation guardrails
+
+The 2026-08-31 `v0.5.0-custom.1` prepare/rollback incident established these mandatory controls:
+
+- Never submit an activation helper as a `KeepAlive` launchd service. A one-shot controller that repeatedly runs `launchctl kickstart -k gui/501/com.hong.catdesk` can create an unbounded restart/browser loop.
+- Use a foreground or one-shot controller only: snapshot launcher/plist hashes, change only the launcher binary, kickstart only CatDesk, poll `launchctl print` and the actual descendant path, and automatically restore the previous launcher on any failed gate.
+- `launchctl kickstart -k` intentionally terminates the child. `SIGTERM` and Expect `spawn id ... not open` are restart evidence, not proof that the new binary crashed.
+- Validate local MCP health/protocol calls separately from the configured public MCP endpoint. A local `200` does not clear an ingress/provider gate; record the public status and provider error code.
+- An `ERR_NGROK_725` bandwidth-limit response is an external provider gate. Keep the previous custom version active and report `PARTIAL/FAIL`; do not touch the Cloudflare tunnel as a workaround.
+- Declare `READY_FOR_ACTIVATION` only after the one-shot controller is absent, the active child path is correct, crash-loop counters remain stable, local and public MCP checks pass, and rollback provenance has been read back.
+
 ## Acceptance checklist
 
 A downstream release is not accepted merely because it compiles.
