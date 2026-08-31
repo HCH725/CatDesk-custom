@@ -12,8 +12,8 @@
 
 - **官方 upstream：** https://github.com/Xeift/CatDesk
 - **Upstream source of truth：** `Xeift/CatDesk` 官方 stable tag
-- **目前 upstream baseline：** `v0.4.3`
-- **目前 upstream commit：** `b985d00840d9b4911327d3ee5728769027e28844`
+- **目前 upstream baseline：** `v0.5.0`
+- **目前 upstream commit：** `0e958123c25284cd9ead1ba171ed1c3c8f58d7c5`
 - **Downstream 版本命名：** `vX.Y.Z-custom.N`
 - **Production source of truth：** 通過驗收與 audit 後的這個 private repository
 
@@ -84,7 +84,7 @@ Change tracking 必須以 canonicalized target 建立 snapshot，避免 external
 
 Downstream port 不能為了保留舊 custom 而把新版 upstream 功能洗掉。
 
-目前 `v0.4.3` baseline 至少要保留：
+目前 `v0.5.0` baseline 至少要保留：
 
 - `read` 支援 `paths` array；
 - 每批最多 32 個 paths；
@@ -92,13 +92,16 @@ Downstream port 不能為了保留舊 custom 而把新版 upstream 功能洗掉�
 - `poll_command` long-poll 行為與 documented wait limit；
 - cursor-based incremental command output；
 - job 已 terminal 但 `hasMoreOutput=true` 時仍必須繼續 drain buffered output；
-- `v0.4.3` 之前已導入的 connector bootstrap/widget completion 行為。
+- `v0.5.0` 之前已導入的 connector bootstrap/widget completion 行為；
+- Traditional Chinese mode selection 與持久化的 UI language preference；
+- opt-in macOS Terminal.app profile flow 與持久化偏好；
+- macOS 在標準 `/Applications` 與 `~/Applications` App bundle 中的 Chromium-family detection。
 
 每次新 upstream release 都必須重新閱讀 release notes，動態產生 release-specific smoke checks。
 
 ## 目前 custom source scope
 
-`v0.4.3` downstream 目前只修改 upstream 的三個 source files：
+`v0.5.0` downstream 目前只修改 upstream 的三個 source files：
 
 ```text
 src/change_tracking/mod.rs
@@ -190,14 +193,15 @@ upstream -> official public repository (Xeift/CatDesk)
 
 ## Build 與 test
 
-使用 upstream Rust toolchain 與 project instructions。每次 downstream release 至少先跑：
+使用 upstream Rust toolchain 與 project instructions。Clean upstream `v0.5.0` 在 `src/browser.rs` 有既存的 rustfmt drift，因此不要把這個純格式變更帶入 downstream。對三個 downstream custom Rust files 做 scoped rustfmt/check，並保留 upstream test 結果（`cargo test`：215 passed、0 failed）：
 
 ```bash
-cargo fmt --check
+rustfmt --edition 2024 --check src/change_tracking/mod.rs src/mcp.rs src/workspace_tools.rs
+cargo check
 cargo test
 ```
 
-Release-specific 與 downstream boundary tests 是額外要求，不能取代 upstream test suite。
+Clean upstream `v0.5.0` 的全樹 `cargo fmt --check` 預期只會因該既存的 `src/browser.rs` 格式 drift 失敗；這不屬於 downstream custom scope。Release-specific 與 downstream boundary tests 是額外要求，不能取代 upstream test suite。
 
 ## License 與 upstream attribution
 

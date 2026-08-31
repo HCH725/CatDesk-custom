@@ -12,8 +12,8 @@
 
 - **Upstream project:** https://github.com/Xeift/CatDesk
 - **Upstream source of truth:** official stable tags from `Xeift/CatDesk`
-- **Current upstream baseline:** `v0.4.3`
-- **Current upstream commit:** `b985d00840d9b4911327d3ee5728769027e28844`
+- **Current upstream baseline:** `v0.5.0`
+- **Current upstream commit:** `0e958123c25284cd9ead1ba171ed1c3c8f58d7c5`
 - **Downstream release naming:** `vX.Y.Z-custom.N`
 - **Production source of truth:** this private repository after a downstream release has passed acceptance and audit
 
@@ -84,7 +84,7 @@ The downstream behavior in `src/mcp.rs` must continue to distinguish:
 
 Downstream changes must never erase features introduced by newer upstream releases.
 
-For the current `v0.4.3` baseline, acceptance includes preserving:
+For the current `v0.5.0` baseline, acceptance includes preserving:
 
 - `read` support for a `paths` array;
 - the documented maximum of 32 paths per batch;
@@ -92,13 +92,16 @@ For the current `v0.4.3` baseline, acceptance includes preserving:
 - `poll_command` long-poll behavior and its documented wait limit;
 - cursor-based incremental command output;
 - draining buffered output while `hasMoreOutput=true`, even after a job reaches a terminal state;
-- connector bootstrap/widget completion behavior introduced before `v0.4.3`.
+- connector bootstrap/widget completion behavior introduced before `v0.5.0`;
+- Traditional Chinese mode selection and persisted UI language preference;
+- opt-in macOS Terminal.app profile flow and its persisted preference;
+- macOS Chromium-family detection in standard `/Applications` and `~/Applications` bundles.
 
 Release-specific checks must be re-derived from the release notes every time upstream changes.
 
 ## Current custom source scope
 
-The `v0.4.3` downstream implementation modifies only these upstream source files:
+The `v0.5.0` downstream implementation modifies only these upstream source files:
 
 ```text
 src/change_tracking/mod.rs
@@ -192,14 +195,15 @@ Never force-push `main` merely to align it with upstream. Upstream changes are i
 
 ## Build and test
 
-Use the upstream Rust toolchain and project instructions. Before any downstream release is accepted, the minimum source verification is:
+Use the upstream Rust toolchain and project instructions. Clean upstream `v0.5.0` has a pre-existing rustfmt drift in `src/browser.rs`, so do not carry that formatting-only change downstream. Verify the three downstream custom Rust files with scoped rustfmt/check commands, and retain the upstream test result (`cargo test`: 215 passed, 0 failed):
 
 ```bash
-cargo fmt --check
+rustfmt --edition 2024 --check src/change_tracking/mod.rs src/mcp.rs src/workspace_tools.rs
+cargo check
 cargo test
 ```
 
-Release-specific and downstream boundary tests are additional requirements, not substitutes for the upstream suite.
+The clean upstream `v0.5.0` full-tree `cargo fmt --check` is expected to fail only on that pre-existing `src/browser.rs` formatting drift; it is not part of the downstream custom scope. Release-specific and downstream boundary tests are additional requirements, not substitutes for the upstream suite.
 
 ## License and upstream attribution
 
