@@ -1,355 +1,214 @@
-# CatDesk
+# CatDesk Custom
 
-**English** | [繁體中文](README.zh-TW.md)
+[English](README.md) | [繁體中文](README.zh-TW.md)
 
-An open-source tool that lets you use ChatGPT Chat as a local coding agent. No reverse engineering, no API, no Codex, no Work mode. A ChatGPT Plus subscription is enough.
+> **Private downstream repository for the production CatDesk installation used in Hanqin-ge's environment.**
+>
+> This repository is **not** a clean mirror of upstream CatDesk. It is the authoritative source for:
+>
+> **official Xeift/CatDesk stable release + the smallest required downstream customizations = production CatDesk**
 
-<p align="center">
-  <img src="docs/images/catdesk_preview.gif" alt="CatDesk in ChatGPT Web"><br>
-  <em>CatDesk in ChatGPT Web</em>
-</p>
+## Repository purpose
 
-# Disclaimer
+- **Upstream project:** https://github.com/Xeift/CatDesk
+- **Upstream source of truth:** official stable tags from `Xeift/CatDesk`
+- **Current upstream baseline:** `v0.5.0`
+- **Current upstream commit:** `0e958123c25284cd9ead1ba171ed1c3c8f58d7c5`
+- **Downstream release naming:** `vX.Y.Z-custom.N`
+- **Production source of truth:** this private repository after a downstream release has passed acceptance and audit
 
-This is an independent open-source project and is not affiliated with or endorsed by OpenAI. I built it as a personal tool and decided to open-source it. Some features are still buggy and may cause unexpected behavior. Use it at your own risk. I am not responsible for any loss caused by this tool. It is strongly recommended to run it inside a VM or container.
+Do **not** replace this repository with a fresh upstream checkout. Future updates must preserve the downstream contract documented below while retaining all relevant upstream release behavior.
 
-# Why CatDesk?
+## Ownership and operating model
 
-Codex has a very generous weekly quota (reset usage frequently) compared to Antigravity (good at good morning) and Claude Code (RIP 5h quota 💀), that's why I love OpenAI so much.
+The maintenance workflow is intentionally simple:
 
-<p align="center">
-  <img src="docs/images/codex_2x_usage.png" alt="Codex reset usage frequently🙏" width="700"><br>
-  <em>Codex reset usage frequently🙏</em>
-</p>
+1. **Hanqin-ge** decides whether a CatDesk upgrade should proceed.
+2. **ChatGPT** reviews the upstream release, plans the update, and reviews the result.
+3. **Hermes `default` profile** performs the implementation and local verification.
+4. **Hermes `auditor` profile** independently checks the result.
+5. ChatGPT reviews audit findings and decides whether to remediate or advance.
+6. Hermes `default` performs remediation if required, followed by another independent audit.
 
-However, the quota runs out very quickly if you work on a large project.
+For Hermes, this repository README and the local skill below are the required starting points before any CatDesk release update:
 
-<p align="center">
-  <img src="docs/images/no_remaining_usage.png" alt="I used up my Codex quota on the first day after it reset" width="700"><br>
-  <em>I used up my Codex quota on the first day after it reset</em>
-</p>
+`~/.hermes/skills/software-development/catdesk-release-update/SKILL.md`
 
-Then you need to wait another 7 days. What are you going to do for the rest of the week?
+## Current downstream contract
 
-Here's the solution: most people with a Plus subscription do not use even 10% of their weekly thinking messages.
+### 1. Separate read and write roots
 
-**_So why not use your 3,000 weekly messages for coding?_**
+Production CatDesk extends upstream workspace access with explicitly configured extra roots.
 
-That's the idea behind CatDesk! It gives ChatGPT Web tools like `write` and `run_command` to edit files on your computer.
-
-<p align="center">
-  <img src="docs/images/thinking_usage_limits.png" alt="ChatGPT reasoning usage limits for GPT-5.5 and GPT-5.6" width="900"><br>
-  <em>GPT-5.5: <a href="https://web.archive.org/web/20260519111010/https://help.openai.com/en/articles/11909943-gpt-55-in-chatgpt">3,000 messages/week</a>, GPT-5.6: <a href="https://help.openai.com/en/articles/20001354-gpt-56-in-chatgpt">unknown</a> but I have never hit the limit</em>
-</p>
-
-# How does this work?
-
-1. A ChatGPT Plus or above subscription is required.
-2. CatDesk runs as a local MCP server on your computer. It has the ability to run commands and edit files, just like Codex.
-3. You can connect ChatGPT Web to CatDesk using a Custom Connector, which is a feature available only to Plus and Pro users.
-4. Done! Now ChatGPT Web can control your computer and code on it.
-
-In short,
+Current production policy:
 
 ```text
-ChatGPT Web + CatDesk
-= a stripped-down version of Codex
-= OpenClaw without cron and other active utilities
+WORKSPACE_ROOT=/Users/hong/workspace
+CATDESK_READ_ROOTS=/Users/hong:/Volumes/ExpansionDrive
+CATDESK_WRITE_ROOTS=/Volumes/ExpansionDrive
 ```
 
-I tried this with GPT-5.2 before, and the results were poor. However, **GPT-5.4 Thinking is now really good at tool calling and computer use.** The first time I tried it with GPT-5.4, I was honestly surprised by how well it worked. GPT-5.5 and GPT-5.6 are even smoother, and GPT-5.6 is extremely good at using CatDesk. It's also very fast.
+Required semantics:
 
-# Differences between ChatGPT Chat + CatDesk, Codex, and the API (let's say Plus plan)
+- `WORKSPACE_ROOT` remains the normal workspace boundary.
+- `CATDESK_READ_ROOTS` adds explicit locations that may be read.
+- `CATDESK_WRITE_ROOTS` adds explicit locations that may be written, edited, deleted, or used as move targets/sources.
+- **Read permission must never imply write permission.**
+- Multiple roots must use the operating system's path-list semantics.
+- Do not broaden these roots to the entire home directory or an entire drive unless explicitly approved and tested.
 
-|       | ChatGPT Chat + CatDesk                             | Codex                   | OpenAI API           |
-| ----- | -------------------------------------------------- | ----------------------- | -------------------- |
-| Usage | 3,000 messages/week                                | Generous weekly quota   | Pay as you go        |
-| Pros  | Stable, no extra fee, and nearly unlimited\* quota | Stable and no extra fee | Stable               |
-| Cons  | Not as smooth as native Codex                      | Runs out very quickly   | Tokens are expensive |
+### 2. Canonical path safety
 
-\*Let's say you sleep 6 hours a day and use CatDesk every day. In that case, you can send 3,000 / (24 - 6) / 7 = 23.8 messages per hour. Since thinking and tool calls take time, it is very difficult to use up your weekly 3,000 message limit.
+All downstream extra-root access must preserve path-boundary security:
 
-# Similar projects
+- Canonicalize existing candidate paths.
+- For paths that do not exist yet, canonicalize the nearest existing parent before boundary validation.
+- Reject traversal outside configured roots.
+- Reject symlink escapes outside configured roots.
+- Preserve distinct read and write boundary checks.
 
-If you don't want to use CatDesk, here are some similar projects you can try:
+### 3. Canonical change tracking
 
-| Project | Description |
-| --- | --- |
-| [Desktop Commander](https://github.com/wonderwhy-er/DesktopCommanderMCP) | General-purpose MCP server for local filesystem, terminal, process management, editing, and automation. |
-| [DevSpace](https://github.com/Waishnav/devspace) | Self-hosted MCP server that brings a Codex-style coding workflow to ChatGPT and other MCP-capable hosts. |
-| [CodexPro](https://github.com/rebel0789/codexpro) | Local MCP coding tools for ChatGPT, scoped to explicitly allowed repositories. |
-| [ChatGPT Local Coder](https://github.com/hoangcoderr/chatgpt-local-coder) | Self-hosted MCP server that gives ChatGPT Web filesystem, shell, Git, patching, and project-context tools. |
-| [Local Coding Agent](https://github.com/LongNgn204/local-coding-agent) | Local MCP coding workspace for ChatGPT Web and other MCP clients. |
-| [Proxide](https://github.com/tt-a1i/proxide) | Agent-agnostic workspace bridge for using web-based models with local repositories through MCP or a browser fallback. |
-| [codex-mcp](https://github.com/mollehxh/codex-mcp) | Small MCP server exposing a Codex-like workspace interface over stdio or HTTP. |
+Change tracking must operate on canonicalized targets so that external allowed roots, symlinks, edits, deletes, and moves produce accurate before/after tracking.
 
-> [!NOTE]
-> I do not own or maintain any of the projects listed above. They are included here for informational purposes only.
+### 4. Correct command and move boundaries
 
-# Who needs this?
+The downstream behavior in `src/mcp.rs` must continue to distinguish:
 
-- People who used up their Codex quota on the first few day after it reset (me🥺)
-- People who are working on web development and crawlers. (CatDesk enables ChatGPT Web to read elements and control your browser tab through chrome-devtools-mcp integration.)
+- command/current-working-directory resolution that only requires read access;
+- move source paths that require write permission;
+- move destination paths that require write permission;
+- write-boundary failures reported as write-root violations rather than generic workspace failures.
 
-# Quickstart
+### 5. Preserve upstream release behavior
 
-> [!CAUTION]
-> This tool is very powerful and can potentially wipe your whole disk or produce unexpected results.
-> Run it inside a VM or container (DevContainer is a good option).
-> Treat it like OpenClaw, keep it containerized and isolated.
+Downstream changes must never erase features introduced by newer upstream releases.
 
-1. Install CatDesk globally with npm.
+For the current `v0.5.0` baseline, acceptance includes preserving:
 
-   ```bash
-   npm install -g catdesk
-   ```
+- `read` support for a `paths` array;
+- the documented maximum of 32 paths per batch;
+- the upstream batch read size limit;
+- `poll_command` long-poll behavior and its documented wait limit;
+- cursor-based incremental command output;
+- draining buffered output while `hasMoreOutput=true`, even after a job reaches a terminal state;
+- connector bootstrap/widget completion behavior introduced before `v0.5.0`;
+- Traditional Chinese mode selection and persisted UI language preference;
+- opt-in macOS Terminal.app profile flow and its persisted preference;
+- macOS Chromium-family detection in standard `/Applications` and `~/Applications` bundles.
 
-2. Run CatDesk from any terminal directory.
+Release-specific checks must be re-derived from the release notes every time upstream changes.
 
-   ```bash
-   catdesk
-   ```
+## Current custom source scope
 
-   When CatDesk starts, choose `Control Computer`, `Control Browser`, or `Both`. Press `l` on the mode selection screen to switch between English and Traditional Chinese; the preference is saved in `~/.catdesk/config.toml`. If browser control is enabled, select a supported Chromium browser. On macOS, CatDesk detects standard browser app bundles in `/Applications` and `~/Applications` in addition to binaries available on `PATH`.
-
-   On first launch, CatDesk will ask you to enter your **ngrok authtoken** and **ngrok static domain** (e.g. `my-app.ngrok-free.dev`). You can get both from the [ngrok dashboard](https://dashboard.ngrok.com/get-started/setup). These are saved to `~/.catdesk/config.toml` and reused on subsequent launches.
-
-   By default, CatDesk listens on port `3200`. You can override it with `PORT`. The workspace root defaults to the current working directory and can be overridden with `WORKSPACE_ROOT`.
-
-   On the first launch from macOS Terminal.app, CatDesk asks whether you want to use its dedicated `CatDesk` Terminal profile and saves that choice to `~/.catdesk/config.toml`. If enabled and the current tab is not already using that profile, CatDesk applies it, closes any temporary helper window, and asks you to run the same command again in that tab. Subsequent launches reuse the saved preference. Set `CATDESK_SKIP_MACOS_TERMINAL_PROFILE=1` to temporarily keep the current Terminal session untouched regardless of the saved preference.
-
-3. Wait for the TUI to show the MCP Server URL.
-
-4. Open [ChatGPT connector settings](https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins).
-
-5. In the pop-up window, fill in the connector form:
-   - Name: `CatDesk` or any name you like
-   - MCP Server URL: the full URL shown in CatDesk TUI
-   - Authentication: `None`
-
-6. Click `I understand and want to continue`.
-
-7. Click `Create`, then click `Connect`.
-
-   - Permission defaults to **Allow read actions**. For the smoothest experience, I recommend **Allow all actions** (equivalent to Codex's `--yolo`; use with caution).
-
-8. Add this to your ChatGPT `Custom instructions`:
+The `v0.5.0` downstream implementation modifies only these upstream source files:
 
 ```text
-CatDesk is a coding tool and a custom connector. Always use CatDesk if the user wants to do anything related to file operations. Always call `catdesk_instruction` after `list_resources`, and follow the instructions it contains.
+src/change_tracking/mod.rs
+src/mcp.rs
+src/workspace_tools.rs
 ```
 
-9. Start using the connector from ChatGPT Web. Some important tips:
+This scope is descriptive, not permanent. A future upstream architecture may require fewer, different, or no downstream changes. Preserve the **behavioral contract**, not old file layouts.
 
-- I recommend let ChatGPT to decide which connector automatically. You can manually selecting the connector using `/` or `@`. This way, ChatGPT can only access the connector you selected, which may improve stability. However, the downside is, `web.search` and `web.open` will be disabled. Which means it can't search latest info. The `web` tool and a custom connector cannot be used at the same time.
+## Required update workflow for Hermes
 
-<table align="center">
-  <tr>
-    <td align="center">
-      <img src="docs/images/connector_slash.png" alt="Select CatDesk from the slash command menu" width="300"><br>
-      <em>Select CatDesk manually with <code>/</code></em>
-    </td>
-    <td align="center">
-      <img src="docs/images/connector_at.png" alt="Select CatDesk from the at-sign menu" width="300"><br>
-      <em>Select CatDesk manually with <code>@</code></em>
-    </td>
-  </tr>
-</table>
+When a new stable CatDesk release is approved for evaluation:
 
-- To improve performance and avoid high memory usage, I strongly recommend **opening a new session for every small feature**. If you need context, you can ask ChatGPT to create a handoff note and paste it into the new session. It will become extremely laggy after 50+ tool calls.
-<p align="center">
-  <img src="docs/images/high_ram_usage.png" alt="3.9 GB Memory usage🥹" width="300"><br>
-  <em>3.9 GB Memory usage🥹</em>
-</p>
+1. Read this README and `catdesk-release-update/SKILL.md` before modifying anything.
+2. Confirm the current accepted downstream tag, clean repository state, and rollback version.
+3. Fetch official upstream tags and record the new tag, commit, release notes, and relevant schema/runtime changes.
+4. Start from the **new upstream stable tag**, not from a copy of old custom source files.
+5. Compare the current accepted downstream behavior with the new upstream architecture.
+6. Port only the **minimum custom behavior still required**. Never copy old source files wholesale over newer upstream source.
+7. Preserve all applicable new upstream features and adjust the downstream implementation to the new architecture.
+8. Run formatting, upstream tests, and targeted downstream boundary/security tests before building.
+9. Build the custom production artifact and record separately:
+   - upstream tag and commit;
+   - downstream diff;
+   - upstream official artifact digest, when applicable;
+   - custom binary SHA-256.
+10. Install the custom binary under a versioned path such as `~/.local/share/catdesk/<version>-custom/bin/catdesk`.
+11. Keep the previously accepted custom version available for rollback. Back up the launcher/plist before deployment.
+12. Change only what the CatDesk binary update requires. Preserve production roots/environment. **Do not rebuild or modify the Cloudflare tunnel as part of a CatDesk binary update.**
+13. Restart only the CatDesk service, then run production-surface acceptance tests.
+14. If ExpansionDrive I/O, path security, or a required upstream feature fails, rollback immediately and report **PARTIAL/FAIL**, never PASS.
+15. Run an independent `auditor` review before declaring the new downstream release accepted.
+16. Only after acceptance and audit, merge the result into `main` and create the next `vX.Y.Z-custom.N` tag.
 
-- If you change MCP-related settings (including the tool mode or enabling/disabling the widget), you will need to start a new chat and refresh CatDesk in [settings](https://chatgpt.com/#settings/Plugins). The most reliable way is to remove CatDesk and reinstall it (steps 2–7).
+## Acceptance checklist
 
-<table align="center">
-  <tr>
-    <td align="center">
-      <img src="docs/images/refresh_catdesk.png" alt="Refresh CatDesk in ChatGPT settings" width="500"><br>
-      <em>Refresh CatDesk in ChatGPT settings</em>
-    </td>
-    <td align="center">
-      <img src="docs/images/remove_catdesk.png" alt="Remove CatDesk from ChatGPT settings" width="500"><br>
-      <em>Remove CatDesk from ChatGPT settings</em>
-    </td>
-  </tr>
-</table>
+A downstream release is not accepted merely because it compiles.
 
-# Stack
+At minimum, verify:
 
-| Part | Stack |
-| --- | --- |
-| Core | Rust |
-| MCP server | Custom implementation (no SDK) |
-| MCP protocolVersion | `2026-07-28` |
-| Server | Axum + Tokio |
-| TUI | Ratatui |
-| Tunnel | ngrok |
-| Browser control | chrome-devtools-mcp |
-| Widget | HTML + JavaScript |
-| Distribution | npm |
+- formatting passes;
+- upstream test suite passes;
+- workspace read/write/edit/delete/search behavior passes;
+- explicitly allowed external read behavior passes;
+- explicitly allowed external write/edit/delete behavior passes;
+- a read-only external root cannot be written;
+- traversal and symlink escape attempts are rejected;
+- change tracking remains correct for canonical/external targets;
+- release-specific upstream API/schema/runtime behavior passes;
+- the active launchd child points to the intended versioned custom binary;
+- CatDesk does not enter a crash loop;
+- `/Volumes/ExpansionDrive` write/read/delete acceptance passes;
+- Cloudflare tunnel continuity is unchanged;
+- all temporary test artifacts are removed.
 
-# Tools
+## Provenance rules
 
-CatDesk has two local tool modes: `multi-tools` exposes 10 tools, and `read-only` exposes 3 tools.
+Never confuse upstream and downstream artifact identity.
 
-CatDesk's local tools in `multi-tools` mode are:
+- The official upstream digest identifies the official upstream artifact.
+- The custom binary digest identifies the locally built downstream production artifact.
+- A successful upstream checksum does **not** prove that the official binary implements this repository's downstream contract.
+- Keep the accepted downstream Git tag as the canonical source-level provenance for each production custom build.
 
-| Tool                  | Type  | What it does                                                               |
-| --------------------- | ----- | -------------------------------------------------------------------------- |
-| `catdesk_instruction` | Guide | Returns CatDesk usage instructions and render Binagotchy                   |
-| `read`                | Read  | Reads one or more text files from the workspace                            |
-| `search`              | Read  | Searches workspace text with `rg`, `grep`, or built-in search              |
-| `write`               | Write | Creates or overwrites a file                                               |
-| `edit`                | Write | Applies guarded replace/range edits atomically                             |
-| `delete`              | Write | Deletes a file or directory                                                |
-| `run_command`         | Shell | Runs a short shell command and waits for completion                        |
-| `start_command`       | Job   | Starts a long-running shell command and immediately returns a job ID       |
-| `poll_command`        | Job   | Reads incremental output and status from a background command              |
-| `cancel_command`      | Job   | Stops a background command and its child process tree                      |
+## Never commit these items
 
-Long-running commands are deliberately decoupled from the lifetime of an MCP HTTP request. Builds, compilation, dependency installation, long test suites, and development servers should use `start_command`, then `poll_command` with the returned cursor. Poll responses are bounded; if `hasMoreOutput` is true, keep polling with `nextCursor` even after the command reaches a terminal state to drain the remaining buffered output. `run_command` remains the simpler path for short commands and has a 120-second maximum timeout.
+This repository must contain source and documentation, not production runtime state.
 
-If browser mode is enabled, CatDesk can also expose extra browser/devtools tools. Those are provided by the browser bridge, so the exact list depends on your environment.
+Do **not** commit:
 
-`search` uses `rg` when it is available, falls back to `grep`, then falls back to CatDesk's built-in scanner. Installing ripgrep is optional, but gives the best search performance and behavior.
+- API keys, access tokens, cookies, credentials, tunnel secrets, or MCP path secrets;
+- `~/.catdesk/config.toml` or any real production config containing local credentials;
+- production launchd plist files or launch wrappers containing environment-specific runtime data;
+- Cloudflare/ngrok credentials or tunnel configuration;
+- runtime logs, restart markers, verification output, command job state, or generated mascot/state files;
+- `target/`, compiled binaries, `.dSYM` bundles, backups, temporary build output, or installed production binaries;
+- secrets copied into examples, issues, commit messages, or release notes.
 
-# Context window
+If deployment configuration must be documented later, use sanitized examples with placeholders only.
 
-According to [the blog](<https://help.openai.com/en/articles/11909943-gpt-53-and-gpt-54-in-chatgpt#:~:text=Thinking%20(GPT%E2%80%915.4%20Thinking)>) and [the code](https://github.com/openai/codex/blob/main/codex-rs/models-manager/src/model_info.rs#L85), the context window in ChatGPT web is different from Codex.
+## Git remotes
 
-| Tier | CatDesk + ChatGPT Web (in + out = sum) | Codex CLI (sum)        |
-| ---- | -------------------------------------- | ---------------------- |
-| Plus | 128K + 128K = 256K                     | 258K (1M experimental) |
-| Pro  | 272K + 128K = 400K                     | 258K (1M experimental) |
-
-# FAQ
-
-### Can I turn off the red CSP button?
-
-<table align="center">
-  <tr>
-    <td align="center">
-      <img src="docs/images/csp_button.png" alt="The red CSP button shown in tool calls" height="96"><br>
-      <em>The red CSP button</em>
-    </td>
-    <td align="center">
-      <img src="docs/images/enforce_csp.png" alt="Advanced connector settings with Enforce CSP in developer mode" height="96"><br>
-      <em><code>Enforce CSP in developer mode</code> in Advanced connector settings</em>
-    </td>
-  </tr>
-</table>
-
-Yes. Open [Advanced connector settings](https://chatgpt.com/#settings/Connectors/Advanced) and turn on `Enforce CSP in developer mode`. That setting removes the red button. CatDesk automatically adds the current ngrok domain to the widget CSP, so the widget should keep working with CSP enforcement enabled.
-
-### I've already connected. Why do I need to connect again and again?
-
-There doesn't seem to be any obvious pattern for when the connector triggers `Connect`. I'm sure it's not triggered by the tool call count, but I don't know the exact reason.
-
-<table align="center">
-  <tr>
-    <td align="center">
-      <img src="docs/images/connect1.png" alt="Connector asks to connect again" width="700"><br>
-      <em>Connector asks to connect again</em>
-    </td>
-    <td align="center">
-      <img src="docs/images/connect2.png" alt="Connector asks to connect again (After you click Continue)" width="700"><br>
-      <em>Connector asks to connect again (After you click Continue)</em>
-    </td>
-  </tr>
-</table>
-
-Looks like it was a bug, and they fixed it 🥳.
-
-### Can CatDesk be used in other apps?
-
-Yes, in theory. CatDesk may also work with other apps that support custom remote MCP servers, including Claude. (I don't think anyone will use CatDesk with Claude though, since Claude Chat mode and Claude Code share the same usage limits.)
-
-However, CatDesk is built specifically for ChatGPT Chat and its Custom Connector (They renamed it to _Apps_, and now they renamed it again and call it _Plugins_, but to prevent confusion with _Application_, I still prefer call it _Connector_) flow. ChatGPT Chat is the environment CatDesk is designed and tested for, so other apps may not work as smoothly.
-
-### How does the input/output token be calculated?
-
-CatDesk does not get official token usage numbers from ChatGPT Web. It estimates them locally with `o200k_base`, the same tokenizer family used by GPT-5.5-style models, so the numbers are useful, but still only estimates.
-
-| Field          | Symbol | What it means                | Price                         |
-| -------------- | ------ | ---------------------------- | ----------------------------- |
-| `inputTokens`  | `↓`    | Tool input ≈ LLM output      | ≈ `$30.00 / 1M` output tokens |
-| `outputTokens` | `↑`    | Tool output ≈ LLM input      | ≈ `$5.00 / 1M` input tokens   |
-| `totalTokens`  | `Σ`    | `inputTokens + outputTokens` | `input price + output price`  |
-
-CatDesk does not count:
-
-- the full ChatGPT conversation
-- hidden prompts or reasoning tokens
-- other internal tokens on OpenAI's side
-
-The loading animation is only a visual effect. ChatGPT Web does not stream partial MCP tool input/output into CatDesk, so the widget animates locally first and then locks to the estimated values when the real tool result arrives.
-
-### What is workspace?
-
-Workspace is the root directory CatDesk is allowed to work in.
-
-By default, it is the directory where you launch CatDesk. You can also override it with `WORKSPACE_ROOT`.
-
-File tools use this directory as their base path, and paths outside the workspace are rejected.
-
-### Where to put my AGENTS.md?
-
-You can put it in 3 places.
-
-1. Workspace root
-2. `~/.catdesk/AGENTS.md`
-3. `~/.codex/AGENTS.md`
-
-CatDesk checks these locations for `AGENTS.md` in this order. This happens every time `catdesk_instruction` is called. You can also manually choose which `AGENTS.md` to use.
-
-<p align="center">
-  <img src="docs/images/set_agents_md.png" alt="Set AGENTS.md manually" width="500"><br>
-  <em>Set AGENTS.md manually</em>
-</p>
-
-### What to do if the widget is blank?
-
-<p align="center">
-  <img src="docs/images/blank_widget.png" alt="Empty widget/function call" width="500"><br>
-  <em>Empty widget/function call</em>
-</p>
-
-1. Simply refresh the page and reconnect the connector.
-2. Stop the response and send the message again.
-
-This is a bug on ChatGPT's side. There is nothing I can do about it, and changing the code will not solve the issue. This bug was probably introduced on Apr 15th.
-
-# Safety
-
-> [!CAUTION]
-> Do **NOT** share the `MCP Server URL` with anyone. Anyone with the URL can access your computer.
-
-The URL is made of these parts:
-
-| Part         | Example                       | What it means                                |
-| ------------ | ----------------------------- | -------------------------------------------- |
-| Public URL   | `https://xxxx.ngrok-free.dev` | Your ngrok static domain                     |
-| Random path  | `/Ab3kL9xQ2pTm7VhC`           | A random path generated on first launch      |
-| MCP endpoint | `/mcp`                        | The actual MCP endpoint                      |
-
-So the full URL looks like this:
+The intended remote layout is:
 
 ```text
-https://xxxx.ngrok-free.dev/Ab3kL9xQ2pTm7VhC/mcp
+origin   -> private downstream repository (HCH725/CatDesk-custom)
+upstream -> official public repository (Xeift/CatDesk)
 ```
 
-Both the static domain and the random path are persisted in `~/.catdesk/config.toml`, so the full MCP URL stays the same across launches. You only need to set up the connector once.
+Never force-push `main` merely to align it with upstream. Upstream changes are integrated as a reviewed downstream release update.
 
-# About Binagotchy
+## Build and test
 
-<p align="center">
-  <img src="docs/images/binagotchy.gif" alt="Binagotchy!" width="500"><br>
-  <em>Binagotchy!</em>
-</p>
+Use the upstream Rust toolchain and project instructions. Clean upstream `v0.5.0` has a pre-existing rustfmt drift in `src/browser.rs`, so do not carry that formatting-only change downstream. Verify the three downstream custom Rust files with scoped rustfmt/check commands, and retain the upstream test result (`cargo test`: 215 passed, 0 failed):
 
-The character is a cute shark-cat! I actually made this before CatDesk and decided to put it in the project.
+```bash
+rustfmt --edition 2024 --check src/change_tracking/mod.rs src/mcp.rs src/workspace_tools.rs
+cargo check
+cargo test
+```
 
-By default, CatDesk will generate a random Binagotchy every time you start it. If you see a cute one, you can set it as your partner on the launch screen. The system will also automatically save every Binagotchy in `~/.catdesk/binagotchy`. You can download it too (or, to be accurate, export it)! Both `.png` and `.gif` are supported. Feel free to use it anywhere. This project and Binagotchy are both under the MIT License. By the way, Binagotchy is generated using pure scripts and does not use any text-to-image or diffusion model.
+The clean upstream `v0.5.0` full-tree `cargo fmt --check` is expected to fail only on that pre-existing `src/browser.rs` formatting drift; it is not part of the downstream custom scope. Release-specific and downstream boundary tests are additional requirements, not substitutes for the upstream suite.
+
+## License and upstream attribution
+
+This downstream repository retains the upstream MIT license and upstream copyright notice. CatDesk is originally developed by `xeift.eth` / Xeift and remains available at:
+
+https://github.com/Xeift/CatDesk
+
+This private repository exists only to maintain the local production customizations and their upgrade history.
