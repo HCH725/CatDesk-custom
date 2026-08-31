@@ -134,7 +134,19 @@ src/workspace_tools.rs
 13. 只重啟 CatDesk service，再跑 production-surface acceptance。
 14. ExpansionDrive I/O、path security 或必要 upstream feature 任一失敗，立刻 rollback，狀態只能是 **PARTIAL/FAIL**，不能宣告 PASS。
 15. 必須交給 `auditor` 做獨立 review。
-16. 全部通過後，才 merge 到 `main`，並建立新的 `vX.Y.Z-custom.N` tag。
+16. 全部通過與 audit 後，才 merge 到 `main`，並建立新的 `vX.Y.Z-custom.N` tag。
+
+## Production activation 事故防線
+
+2026-08-31 `v0.5.0-custom.1` prepare/rollback 事故確立以下必要控制：
+
+- 絕不能把 activation helper 提交成 `KeepAlive` launchd service；即使 binary 本身健康，仍可能形成無限 restart／瀏覽器重開迴圈。
+- activation 前必須以 `launchctl print`、`launchctl list` 與 plist registration 證據確認當下 owning launchd domain。不得硬編碼 `gui/<uid>` 或 `user/<uid>`；在猜測 domain 找不到 service 是 domain/registration mismatch，不是 v0.5 runtime regression 的證據。
+- foreground 或 one-shot controller 必須在 CatDesk process tree 外：先快照 launcher/plist hash，只切換 launcher target，提供自足 rollback，且僅 kickstart CatDesk。
+- `launchctl kickstart -k` 本來就會終止 child；`SIGTERM` 與 Expect `spawn id ... not open` 是重啟證據，不是新 binary crash 的證明。
+- restart 後必須確認 replacement child path、health/discover、crash-loop 穩定性、root invariants 與 Cloudflare continuity。
+- local MCP health/protocol 與設定的 public MCP endpoint 必須分開驗證。Cloudflare 是 active public path 時，stale/legacy ngrok endpoint 的 quota/error 只能記為 stale probe：不是 production ingress evidence，也不得驅動 rollback 或任何 Cloudflare 變更。
+- 只有在 one-shot controller 已不存在、intended child 已驗證、crash-loop gate 穩定、local 與 active-public MCP 都通過，且 rollback provenance 已讀回後，才可宣告 `READY_FOR_ACTIVATION`。
 
 ## Acceptance checklist
 
