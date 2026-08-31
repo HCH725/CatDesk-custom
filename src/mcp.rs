@@ -1334,7 +1334,7 @@ async fn handle_start_command(
         Ok(value) => value,
         Err(error) => return tool_error_response(req, error),
     };
-    let cwd = match command::resolve_workspace_path(workspace_root, cwd_input) {
+    let cwd = match workspace_tools::resolve_read_path(workspace_root, cwd_input) {
         Ok(path) => path,
         Err(error) => {
             return tool_error_response(
@@ -1517,7 +1517,7 @@ async fn handle_run_command(
         return tool_error_response(req, message.into());
     }
 
-    let cwd = match command::resolve_workspace_path(workspace_root, cwd_input) {
+    let cwd = match workspace_tools::resolve_read_path(workspace_root, cwd_input) {
         Ok(p) => p,
         Err(e) => {
             return tool_error_response(req, format!("code: PATH_OUTSIDE_WORKSPACE\nmessage: {e}"));
@@ -1617,11 +1617,11 @@ fn resolve_intercepted_move_path(
     cwd: &Path,
     intercept: &command::InterceptedMovePathRequest,
 ) -> Result<ResolvedMovePathIntercept, String> {
-    let from = command::resolve_command_path(workspace_root, cwd, Some(&intercept.from))
-        .map_err(|e| format!("code: PATH_OUTSIDE_WORKSPACE\nmessage: {e}"))?;
+    let from = workspace_tools::resolve_write_path_from_cwd(workspace_root, cwd, &intercept.from)
+        .map_err(|e| format!("code: PATH_OUTSIDE_WRITE_ROOTS\nmessage: {e}"))?;
     let destination_operand =
-        command::resolve_command_path(workspace_root, cwd, Some(&intercept.to))
-            .map_err(|e| format!("code: PATH_OUTSIDE_WORKSPACE\nmessage: {e}"))?;
+        workspace_tools::resolve_write_path_from_cwd(workspace_root, cwd, &intercept.to)
+            .map_err(|e| format!("code: PATH_OUTSIDE_WRITE_ROOTS\nmessage: {e}"))?;
 
     let source_meta = std::fs::symlink_metadata(&from)
         .map_err(|_| format!("Source path not found: {}", from.display()))?;
@@ -3123,7 +3123,7 @@ fn change_scope_for_request(req: &JsonRpcRequest, workspace_root: &str) -> Chang
     let arguments = tool_arguments(req);
 
     let resolve = |path: Option<&str>| {
-        path.and_then(|value| command::resolve_workspace_path(workspace_root, Some(value)).ok())
+        path.and_then(|value| workspace_tools::resolve_read_path(workspace_root, Some(value)).ok())
     };
 
     match tool_name.as_str() {
@@ -3143,7 +3143,7 @@ fn change_scope_for_request(req: &JsonRpcRequest, workspace_root: &str) -> Chang
             }
 
             if let Some(intercept) = command::detect_move_path_intercept(command_text) {
-                let Ok(cwd) = command::resolve_workspace_path(
+                let Ok(cwd) = workspace_tools::resolve_read_path(
                     workspace_root,
                     arguments.get("cwd").and_then(Value::as_str),
                 ) else {
@@ -3159,7 +3159,7 @@ fn change_scope_for_request(req: &JsonRpcRequest, workspace_root: &str) -> Chang
                 ]);
             }
 
-            command::resolve_workspace_path(
+            workspace_tools::resolve_read_path(
                 workspace_root,
                 arguments.get("cwd").and_then(Value::as_str),
             )
