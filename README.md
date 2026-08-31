@@ -30,9 +30,18 @@ The maintenance workflow is intentionally simple:
 5. ChatGPT reviews audit findings and decides whether to remediate or advance.
 6. Hermes `default` performs remediation if required, followed by another independent audit.
 
-For Hermes, this repository README and the local skill below are the required starting points before any CatDesk release update:
+This repository defines the CatDesk update authority in two layers:
+
+- **README (this file) is the canonical behavioral contract** — what must remain true about production CatDesk regardless of release.
+- **`skills/catdesk-release-update/SKILL.md` (repo-tracked) is the canonical operational procedure** — how Hermes performs an update.
+
+The Hermes runtime entrypoint
 
 `~/.hermes/skills/software-development/catdesk-release-update/SKILL.md`
+
+is only a symlink entrypoint and must resolve to the repo-tracked skill above. If the README and the skill conflict, the README wins: stop the upgrade, reconcile the skill with the README, and only then continue.
+
+Before every upgrade, Hermes must fetch/sync this repository, confirm `origin/main`, read this README and the repo-tracked skill, confirm the runtime skill entrypoint resolves to the repo-tracked file, and then identify the current accepted `vX.Y.Z-custom.N` tag and rollback version. Never rely on memory or an old worktree.
 
 ## Current downstream contract
 
@@ -115,8 +124,8 @@ This scope is descriptive, not permanent. A future upstream architecture may req
 
 When a new stable CatDesk release is approved for evaluation:
 
-1. Read this README and `catdesk-release-update/SKILL.md` before modifying anything.
-2. Confirm the current accepted downstream tag, clean repository state, and rollback version.
+1. Fetch/sync this repository, confirm local `main` matches `origin/main`, and read this README plus the repo-tracked `skills/catdesk-release-update/SKILL.md` before modifying anything.
+2. Confirm the local runtime skill entrypoint resolves to the repo-tracked skill, then confirm the current accepted downstream tag (`vX.Y.Z-custom.N`), clean repository state, and rollback version from tags/README — never from memory or an old worktree.
 3. Fetch official upstream tags and record the new tag, commit, release notes, and relevant schema/runtime changes.
 4. Start from the **new upstream stable tag**, not from a copy of old custom source files.
 5. Compare the current accepted downstream behavior with the new upstream architecture.
