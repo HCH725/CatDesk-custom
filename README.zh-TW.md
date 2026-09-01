@@ -138,7 +138,7 @@ src/workspace_tools.rs
 
 這三個檔名不是永久規則。未來 upstream 架構可能改變，屆時可能需要更少、不同，甚至零個修改。要保存的是 **behavioral contract**，不是舊版檔案配置。
 
-## 穩定 macOS runtime 身份與部署契約（Phase A — ROOT_CAUSE_CONFIRMED）
+## 穩定 macOS runtime 身份與部署契約（Phase B — PRODUCTION_ACCEPTED）
 
 ### Root cause
 
@@ -156,7 +156,10 @@ accepted tag vX.Y.Z-custom.N
   → 以穩定簽署身份 com.hong.catdesk 重新簽署
   → 實體穩定 runtime ~/.local/share/catdesk/runtime/bin/catdesk（launcher 唯一目標）
   → launcher exec: spawn /Users/hong/.local/share/catdesk/runtime/bin/catdesk
+  → production acceptance（ephemeral job + triple stability + MCP/Cloudflare/roots）
 ```
+
+未來升級必須遵循 GitHub-first → accepted tag → versioned artifact → stable sign/copy → stable runtime → production acceptance；**不可直接在 production 執行 `git pull`**。
 
 規則：
 
@@ -165,8 +168,7 @@ accepted tag vX.Y.Z-custom.N
 - 驗證階段使用 `~/.local/share/catdesk/runtime-next/bin/catdesk`（實體複製 + 簽署 + 驗證），通過後才 promotion 到 `runtime/bin`。在通過所有 gate 與獨立 audit 前，不得修改 `runtime/bin` 或 launcher。
 - `runtime/` 與 `runtime-next/` 是 production runtime state，**絕對不能 commit**。
 
-> **過渡現況（Phase A — 尚未 activation，非 canonical）：** 目前實際運行的 production launchd child 仍暫時為 `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk`（版本化路徑，ad-hoc `CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`、`Identifier=catdesk-e6cd98f31dbf91fd`），由 launcher 直接 spawn。此為 **migration-before-Phase-B 現況證據**，僅為記錄當下真實狀態，不得解讀為永久規則。
-> **Canonical 未來狀態（Phase B 完成後）：** launcher 的**唯一** production target 必須是實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（簽署 `Identifier=com.hong.catdesk`、`DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`）。版本化產物 `~/.local/share/catdesk/<version>-custom/bin/catdesk` 僅保留為 provenance / rollback source，**不得**再作為 launcher target。
+> **Canonical / current production（Phase B — PRODUCTION_ACCEPTED）：** launcher 的**唯一**目標是實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（簽署 `Identifier=com.hong.catdesk`、`DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`）。版本化產物 `~/.local/share/catdesk/<version>-custom/bin/catdesk` 僅保留為 **provenance / rollback source**，**不得**再作為 launcher target。歷史備註：Phase B 啟用前，實際運行的 child 曾暫時為 `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk`（版本化路徑、ad-hoc `CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`、`Identifier=catdesk-e6cd98f31dbf91fd`）—— 該狀態已退役，不得視為當前 production。
 
 ### 穩定簽署身份（一次性本機 bootstrap）
 
@@ -211,9 +213,25 @@ test ! -L /path/to/binary                  # 必須是實體檔案
 
 ### TCC 清理政策
 
-TCC cleanup 仍 **延後** 至穩定 `runtime/bin/catdesk` 啟用並驗收後。**禁止** 以 `sqlite3` 或任何直接 DB 寫入方式修改 `~/Library/Application Support/com.apple.TCC/TCC.db` —— 該路徑不被支援且可能毀損 TCC。
+舊版本化路徑的 TCC rows（例如 `0.5.0-custom.3` ad-hoc 路徑）可保留為 **stale cosmetic rows**，直到使用者選擇一次性整理。**禁止** 以 `sqlite3` 或任何直接 DB 寫入方式修改 `~/Library/Application Support/com.apple.TCC/TCC.db` —— 該路徑不被支援且可能毀損 TCC。**不得**為 CatDesk 清理而執行或推薦任何 `tccutil reset`（全域或針對特定 service，例如 `All`、`Accessibility`/`ScreenCapture`/`Automation`）；一般版本更新絕不執行任何 TCC 清理/重置。若使用者要清理 stale entries，**僅建議**使用受支援的 System Settings UI（**System Settings → Privacy & Security**）檢視/移除舊版本化路徑的 stale entry，必要時再從穩定的 `runtime` 路徑重新互動授權。除非已在實機上對「該特定 client/service」的 `tccutil reset <service> <client>` 精確作用範圍完成獨立實證，且明確知道不會一併重置當前 stable runtime 的權限，否則不得為 CatDesk 清理推薦或執行任何 `tccutil reset`。清理 **不是 release gate、不是 production blocker**。
 
-當（啟用後）確有需要進行一次性清理時，只能走支援路徑：**System Settings → Privacy & Security** 或 `tccutil reset`（例如 `tccutil reset All com.hong.catdesk` 或針對 `Accessibility`/`ScreenCapture`/`Automation` 的範圍 reset），再從穩定的 `runtime` 路徑重新互動授權。在此之前，保留版本化路徑的 TCC rows 為孤兒狀態，不得提前清理。
+### TCC 遷移lesson（一次性 bootstrap）
+
+從舊 ad-hoc／版本化路徑（`~/.local/share/catdesk/<version>-custom/bin/catdesk`，ad-hoc `Identifier=catdesk-…`）第一次遷移到穩定簽署 runtime（`~/.local/share/catdesk/runtime/bin/catdesk`，`Identifier=com.hong.catdesk`、`DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`）時，macOS 可能彈出 **一次新的權限／TCC 授權**。這是 **一次性 bootstrap** —— 使用者授權後，未來 accepted versions 必須 **複製／簽署到相同實體 `runtime/bin/catdesk` 路徑、沿用同一 signing identity／Identifier／DR**，不得把 launcher 改回版本化路徑，否則每版都會新增 TCC client。
+
+### Post-activation acceptance 契約（PRODUCTION_ACCEPTED）
+
+Phase B 的 `PRODUCTION_ACCEPTED` 僅在以下全部通過後授予（記錄為契約，不硬寫 PID）：
+
+- **Ephemeral activation job：** `launchctl bootstrap` one-shot 僅執行 **一次**（`runs=1`、`exit 0`），結束後由重連的 ChatGPT 執行 `launchctl bootout` 清理。
+- **Process-level activation：** 精確 child 取代（`PPID==wrapper` + `exe==/Users/hong/.local/share/catdesk/runtime/bin/catdesk`）、**30 秒 triple stability**（wrapper PID + `runs` + stable child PID 皆不變，`PPID`/`exe` 仍穩定）與 `nc -z 127.0.0.1 3200` TCP 成功。
+- **Post-activation acceptance（重連後 ChatGPT）：** MCP `catdesk_instruction` discover + `catdesk_command`／`search`／`write`／`delete`、ExpansionDrive 讀寫、**write-root denial** 與 **outside-read-root denial**（path-boundary 驗證）以及 **Cloudflare continuity** 全部 PASS，才算 `PRODUCTION_ACCEPTED`。
+
+Launcher 唯一目標為穩定 runtime；穩定 `codesign Identifier=com.hong.catdesk` 且同一 local certificate／DR；Cloudflare tunnel 不變；read／write roots 契約不變。
+
+### Troubleshooting 備註 — 專用 `read` 工具 schema mismatch
+
+專用 `read` 工具的 schema `path` 與 runtime 實際 `paths`／`CATDESK_READ_ROOTS` 不一致，為 **既有、非阻塞的 tool-surface issue**，不是穩定 runtime 或 TCC 的 regression。已另行追蹤，不影響 Phase B 的 `PRODUCTION_ACCEPTED` 契約，亦不得擴張為新 framework。
 
 ## Hermes 必須遵守的更新流程
 
@@ -298,7 +316,7 @@ Canonical controller 產物：`scripts/activate-stable-runtime.sh`（預設 `--p
 - traversal / symlink escape 被拒絕；
 - canonical/external target 的 change tracking 正確；
 - 新 release 的 API/schema/runtime behavior 正常；
-- launchd active child 指向正確的 production binary — **過渡 Phase A（尚未 activation）：** 暫時為 `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk`（版本化路徑、ad-hoc，僅 migration-before-Phase-B 現況證據）；**canonical 未來狀態（Phase B 完成後）：** 必須是實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（launcher 唯一目標；版本化產物僅為 provenance/rollback source，不得作 launcher target）；
+- launchd active child 指向正確的 production binary — **canonical / current production（Phase B — PRODUCTION_ACCEPTED）：** 必須是實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（launcher 唯一目標；版本化產物僅為 provenance/rollback source，不得作 launcher target）；
 - CatDesk 沒有 crash loop；
 - `/Volumes/ExpansionDrive` write/read/delete acceptance pass；
 - Cloudflare tunnel continuity 不受影響；

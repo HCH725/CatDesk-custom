@@ -138,7 +138,7 @@ src/workspace_tools.rs
 
 This scope is descriptive, not permanent. A future upstream architecture may require fewer, different, or no downstream changes. Preserve the **behavioral contract**, not old file layouts.
 
-## Stable macOS runtime identity and deployment contract (Phase A — ROOT_CAUSE_CONFIRMED)
+## Stable macOS runtime identity and deployment contract (Phase B — PRODUCTION_ACCEPTED)
 
 ### Root cause
 
@@ -156,7 +156,10 @@ accepted tag vX.Y.Z-custom.N
   → re-sign with stable signing identity com.hong.catdesk
   → physical stable runtime ~/.local/share/catdesk/runtime/bin/catdesk (launcher's only target)
   → launcher exec: spawn /Users/hong/.local/share/catdesk/runtime/bin/catdesk
+  → production acceptance (ephemeral job + triple stability + MCP/Cloudflare/roots)
 ```
+
+Future upgrades MUST follow GitHub-first → accepted tag → versioned artifact → stable sign/copy → stable runtime → production acceptance; never direct `git pull` on production or `runtime`.
 
 Rules:
 
@@ -165,8 +168,7 @@ Rules:
 - Staging validation uses `~/.local/share/catdesk/runtime-next/bin/catdesk` (physical copy + sign + verify) before promotion to `runtime/bin`. Do not modify `runtime/bin` or the launcher until the staged file passes all gates and independent audit.
 - `runtime/` and `runtime-next/` are production runtime state and MUST never be committed.
 
-> **Transitional current state (Phase A — pre-activation, not canonical):** the actually running production launchd child is still temporarily `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk` (versioned path, ad-hoc `CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`, `Identifier=catdesk-e6cd98f31dbf91fd`) spawned by the launcher. This is **migration-before-Phase-B evidence only**, recorded to avoid mistaking current reality for the contract — it MUST NOT be read as a permanent rule.
-> **Canonical post-migration state (Phase B):** the launcher's **sole** production target MUST be the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (signed `Identifier=com.hong.catdesk`, `DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`). Versioned artifacts `~/.local/share/catdesk/<version>-custom/bin/catdesk` remain provenance/rollback source only and MUST never be used as a launcher target after `runtime` is adopted.
+> **Canonical / current production (Phase B — PRODUCTION_ACCEPTED):** the launcher's **sole** target is the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (signed `Identifier=com.hong.catdesk`, `DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`). Versioned artifacts `~/.local/share/catdesk/<version>-custom/bin/catdesk` remain **provenance/rollback source only** and MUST never be used as a launcher target. Historical note: before Phase B activation the running child was temporarily `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk` (versioned path, ad-hoc `CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`, `Identifier=catdesk-e6cd98f31dbf91fd`) — that state is retired and MUST NOT be read as current production.
 
 ### Stable signing identity (one-time local bootstrap)
 
@@ -211,9 +213,25 @@ Do not accept a binary based solely on `find-identity` listing text; the actual 
 
 ### TCC cleanup policy
 
-TCC cleanup remains **deferred** until the stable `runtime/bin/catdesk` is activated and accepted. **Never** mutate `~/Library/Application Support/com.apple.TCC/TCC.db` via `sqlite3` or any direct DB write — that is unsupported and may corrupt TCC.
+Old versioned-path TCC rows (e.g., `0.5.0-custom.3` ad-hoc path) may remain as **stale cosmetic rows** until the user chooses a one-time cleanup. **Never** mutate `~/Library/Application Support/com.apple.TCC/TCC.db` via `sqlite3` or any direct DB write — that is unsupported and may corrupt TCC. Do **not** run or recommend any `tccutil reset` (global or service-scoped, e.g., `All`, `Accessibility`, `ScreenCapture`, `Automation`) for CatDesk cleanup; normal version updates MUST never perform any TCC cleanup/reset. If the user wants to clean stale entries, use **only** the supported System Settings UI (**System Settings → Privacy & Security**) to review/remove the stale versioned-path entry, then re-grant permissions interactively from the stable `runtime` path if needed. Unless the exact scope of a specific `tccutil reset <service> <client>` for that client/service has been independently verified on real hardware and is explicitly known not to reset current stable runtime permissions, it MUST NOT be recommended or executed for CatDesk cleanup. Cleanup is **not a release gate and not a production blocker**.
 
-When the one-time cleanup is eventually warranted (post-activation), use only supported paths: **System Settings → Privacy & Security** or `tccutil reset` (e.g., `tccutil reset All com.hong.catdesk` or scoped `Accessibility`/`ScreenCapture`/`Automation` resets) and then re-grant permissions interactively from the stable `runtime` path. Leave versioned-path TCC rows orphaned until that moment; do not pre-clean.
+### TCC migration lesson (one-time bootstrap)
+
+The first migration from the old ad-hoc/versioned-path (`~/.local/share/catdesk/<version>-custom/bin/catdesk`, ad-hoc `Identifier=catdesk-…`) to the stable signed runtime (`~/.local/share/catdesk/runtime/bin/catdesk`, `Identifier=com.hong.catdesk`, `DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`) may trigger **one new macOS permission/TCC prompt** for the new stable identity. This is a **one-time bootstrap** — after the user grants it, future accepted versions MUST be promoted by **copying/signing to the same physical `runtime/bin/catdesk` path and reusing the same signing identity/Identifier/DR**. The launcher MUST never be pointed back to a versioned path after `runtime` is adopted, otherwise each version would again create a new TCC client.
+
+### Post-activation acceptance contract (PRODUCTION_ACCEPTED)
+
+Phase B `PRODUCTION_ACCEPTED` was granted only after all of the following passed (recorded as contract, without hard-coding PIDs):
+
+- **Ephemeral activation job:** `launchctl bootstrap` one-shot ran **exactly once** (`runs=1`, `exit 0`), then `launchctl bootout` cleanup by the reconnected ChatGPT.
+- **Process-level activation:** precise child replacement (`PPID==wrapper` + `exe==/Users/hong/.local/share/catdesk/runtime/bin/catdesk`), **30s triple stability** (wrapper PID + `runs` + stable child PID unchanged, `PPID`/`exe` still stable), and `nc -z 127.0.0.1 3200` TCP success.
+- **Post-activation acceptance by reconnected ChatGPT:** MCP `catdesk_instruction` discover + `catdesk_command`/`search`/`write`/`delete`, ExpansionDrive read/write, **write-root denial** and **outside-read-root denial** (path-boundary enforcement), and **Cloudflare continuity** all PASS. Only then `PRODUCTION_ACCEPTED`.
+
+Launcher sole target is the stable runtime; stable `codesign Identifier=com.hong.catdesk` on the same local certificate/DR; Cloudflare tunnel unchanged; read/write roots contract unchanged.
+
+### Troubleshooting note — dedicated `read` tool schema mismatch
+
+The dedicated `read` tool's schema `path` vs runtime `paths`/`CATDESK_READ_ROOTS` mismatch is a **pre-existing, non-blocking tool-surface issue**, not a stable-runtime or TCC regression. It is tracked separately and does not affect the Phase B `PRODUCTION_ACCEPTED` contract. Do not expand it into a new framework.
 
 ## Required update workflow for Hermes
 
@@ -300,7 +318,7 @@ At minimum, verify:
 - traversal and symlink escape attempts are rejected;
 - change tracking remains correct for canonical/external targets;
 - release-specific upstream API/schema/runtime behavior passes;
-- the active launchd child points to the intended production binary — **transitional Phase A (pre-activation):** temporarily `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk` (versioned path, ad-hoc, migration-before-Phase-B evidence only); **canonical post-migration (Phase B):** MUST be the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (launcher's sole target; versioned artifacts are provenance/rollback source only, never a launcher target);
+- the active launchd child points to the intended production binary — **canonical / current production (Phase B — PRODUCTION_ACCEPTED):** MUST be the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (launcher's sole target; versioned artifacts are provenance/rollback source only, never a launcher target);
 - CatDesk does not enter a crash loop;
 - `/Volumes/ExpansionDrive` write/read/delete acceptance passes;
 - Cloudflare tunnel continuity is unchanged;

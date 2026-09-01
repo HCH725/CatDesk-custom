@@ -21,11 +21,11 @@ Production CatDesk must never track `main` directly. Each level is reviewed befo
 
 1. **Upstream stable tag** — the official `Xeift/CatDesk` stable release (tag + commit + release notes + official artifact) is the top source of truth for release behavior.
 2. **Downstream private repository** — reviewed `main` and the current accepted `vX.Y.Z-custom.N` tag in `HCH725/CatDesk-custom` are the source of truth for downstream policy. Nothing is accepted by merge or tag until it has passed acceptance and independent audit.
-3. **Local production deployment** — the **physical stable runtime** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (launcher's sole canonical target post-migration, Phase B) built from the versioned artifact `~/.local/share/catdesk/<version>-custom/bin/catdesk` (accepted-tag provenance / rollback source) is what actually runs in the canonical state. **Transitional current state (Phase A — pre-activation, not canonical):** the actually running production child is still temporarily `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk` (versioned path, ad-hoc) spawned by the launcher — this is migration-before-Phase-B evidence only and MUST NOT be read as the canonical contract. Versioned artifacts remain provenance/rollback source only, never a launcher target after `runtime` is adopted.
+3. **Local production deployment** — the **physical stable runtime** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (**canonical / current production**, Phase B — PRODUCTION_ACCEPTED, launcher's sole target) built from the versioned artifact `~/.local/share/catdesk/<version>-custom/bin/catdesk` (accepted-tag provenance / rollback source) is what actually runs. Versioned artifacts remain provenance/rollback source only and MUST never be used as a launcher target. Historical note: before Phase B activation the running child was temporarily `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk` (versioned path, ad-hoc) — that state is retired.
 
-Update flow (canonical): **accepted tag `vX.Y.Z-custom.N` → versioned artifact `~/.local/share/catdesk/<version>-custom/bin/catdesk` (provenance/rollback source) → sign/copy with stable identity `com.hong.catdesk` → physical stable runtime `~/.local/share/catdesk/runtime/bin/catdesk` → launcher**. Production is built from the accepted tag via this chain, never by following `main` or any old worktree.
+Update flow (canonical): **accepted tag `vX.Y.Z-custom.N` → versioned artifact `~/.local/share/catdesk/<version>-custom/bin/catdesk` (provenance/rollback source) → sign/copy with stable identity `com.hong.catdesk` → physical stable runtime `~/.local/share/catdesk/runtime/bin/catdesk` → launcher → production acceptance**. Production is built from the accepted tag via this chain, never by following `main`, any old worktree, or direct `git pull` on production.
 
-## Stable macOS runtime identity and deployment contract (Phase A — ROOT_CAUSE_CONFIRMED)
+## Stable macOS runtime identity and deployment contract (Phase B — PRODUCTION_ACCEPTED)
 
 ### Root cause
 
@@ -82,9 +82,19 @@ Do not gate on `find-identity` display text alone; the expected fingerprint/iden
 
 ### TCC cleanup policy
 
-TCC cleanup stays **deferred** until stable `runtime/bin/catdesk` is activated and accepted. **Never** mutate `~/Library/Application Support/com.apple.TCC/TCC.db` via `sqlite3` or any direct DB write (unsupported — may corrupt TCC).
+Old versioned-path TCC rows (e.g., `0.5.0-custom.3` ad-hoc path) may remain as **stale cosmetic rows** until the user chooses a one-time cleanup. **Never** mutate `~/Library/Application Support/com.apple.TCC/TCC.db` via `sqlite3` or any direct DB write (unsupported — may corrupt TCC). Do **not** run or recommend any `tccutil reset` (global or service-scoped, e.g., `All`, `Accessibility`, `ScreenCapture`, `Automation`) for CatDesk cleanup; normal version updates MUST never perform any TCC cleanup/reset. If the user wants to clean stale entries, use **only** the supported System Settings UI (**System Settings → Privacy & Security**) to review/remove the stale versioned-path entry, then re-grant permissions interactively from the stable `runtime` path if needed. Unless the exact scope of a specific `tccutil reset <service> <client>` for that client/service has been independently verified on real hardware and is explicitly known not to reset current stable runtime permissions, it MUST NOT be recommended or executed for CatDesk cleanup. Cleanup is **not a release gate and not a production blocker**.
 
-When one-time cleanup is warranted post-activation, use only supported paths: **System Settings → Privacy & Security** or `tccutil reset` (e.g., `tccutil reset All com.hong.catdesk` or scoped `Accessibility`/`ScreenCapture`/`Automation` resets), then re-grant permissions interactively from the stable `runtime` path. Leave versioned-path TCC rows orphaned until then.
+### TCC migration lesson (one-time bootstrap)
+
+The first migration from the old ad-hoc/versioned-path (`~/.local/share/catdesk/<version>-custom/bin/catdesk`, ad-hoc) to the stable signed runtime (`~/.local/share/catdesk/runtime/bin/catdesk`, `Identifier=com.hong.catdesk`, `DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`) may trigger **one new macOS permission/TCC prompt** for the new stable identity. This is a **one-time bootstrap** — after the user grants it, future accepted versions MUST be promoted by **copying/signing to the same physical `runtime/bin/catdesk` path and reusing the same signing identity/Identifier/DR**. The launcher MUST never be pointed back to a versioned path after `runtime` is adopted, otherwise each version would again create a new TCC client.
+
+### Post-activation acceptance contract (PRODUCTION_ACCEPTED)
+
+Phase B `PRODUCTION_ACCEPTED` was granted only after (without hard-coding PIDs): ephemeral `launchctl bootstrap` one-shot `runs=1`/`exit 0`; precise child replacement (`PPID==wrapper` + `exe==stable runtime`), 30s triple stability (wrapper PID + `runs` + stable child PID unchanged) + `nc -z 127.0.0.1 3200`; and reconnected ChatGPT acceptance — MCP `catdesk_instruction` discover + `catdesk_command`/`search`/`write`/`delete`, ExpansionDrive read/write, **write-root denial** and **outside-read-root denial**, and **Cloudflare continuity** all PASS. Launcher sole target is the stable runtime; same local certificate/DR; Cloudflare unchanged; roots contract unchanged. Future upgrades MUST follow GitHub-first → accepted tag → versioned artifact → stable sign/copy → stable runtime → production acceptance, never direct `git pull` on production.
+
+### Troubleshooting note — dedicated `read` tool schema mismatch
+
+The dedicated `read` tool's schema `path` vs runtime `paths`/`CATDESK_READ_ROOTS` mismatch is a **pre-existing, non-blocking tool-surface issue**, not a stable-runtime or TCC regression. Tracked separately; do not expand into a new framework.
 
 ## Preflight before any update
 
