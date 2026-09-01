@@ -213,7 +213,7 @@ test ! -L /path/to/binary                  # 必須是實體檔案
 
 ### TCC 清理政策
 
-舊版本化路徑的 TCC rows（例如 `0.5.0-custom.3` ad-hoc 路徑）可保留為 **stale cosmetic rows**，直到使用者選擇一次性整理。**禁止** 以 `sqlite3` 或任何直接 DB 寫入方式修改 `~/Library/Application Support/com.apple.TCC/TCC.db` —— 該路徑不被支援且可能毀損 TCC。**不得**在一般更新中執行 `tccutil reset`。若使用者要清理，優先走支援的 System Settings UI（**System Settings → Privacy & Security**）或範圍化的 `tccutil reset`（例如 `tccutil reset All com.hong.catdesk` 或針對 `Accessibility`/`ScreenCapture`/`Automation`），再從穩定的 `runtime` 路徑重新互動授權。清理 **不是 release gate、不是 production blocker**。
+舊版本化路徑的 TCC rows（例如 `0.5.0-custom.3` ad-hoc 路徑）可保留為 **stale cosmetic rows**，直到使用者選擇一次性整理。**禁止** 以 `sqlite3` 或任何直接 DB 寫入方式修改 `~/Library/Application Support/com.apple.TCC/TCC.db` —— 該路徑不被支援且可能毀損 TCC。**不得**為 CatDesk 清理而執行或推薦任何 `tccutil reset`（全域或針對特定 service，例如 `All`、`Accessibility`/`ScreenCapture`/`Automation`）；一般版本更新絕不執行任何 TCC 清理/重置。若使用者要清理 stale entries，**僅建議**使用受支援的 System Settings UI（**System Settings → Privacy & Security**）檢視/移除舊版本化路徑的 stale entry，必要時再從穩定的 `runtime` 路徑重新互動授權。除非已在實機上對「該特定 client/service」的 `tccutil reset <service> <client>` 精確作用範圍完成獨立實證，且明確知道不會一併重置當前 stable runtime 的權限，否則不得為 CatDesk 清理推薦或執行任何 `tccutil reset`。清理 **不是 release gate、不是 production blocker**。
 
 ### TCC 遷移lesson（一次性 bootstrap）
 
