@@ -138,6 +138,83 @@ src/workspace_tools.rs
 
 This scope is descriptive, not permanent. A future upstream architecture may require fewer, different, or no downstream changes. Preserve the **behavioral contract**, not old file layouts.
 
+## Stable macOS runtime identity and deployment contract (Phase A — ROOT_CAUSE_CONFIRMED)
+
+### Root cause
+
+macOS TCC binds permissions to the binary's effective identity (filesystem path, code signature, CDHash, and Designated Requirement). Prior deployments used versioned paths such as `~/.local/share/catdesk/<version>-custom/bin/catdesk` with an **ad-hoc** signature (`Identifier=catdesk-…`, `Signature=adhoc`, `CDHash=aaa5b…`). Each new version therefore presented a **new TCC identity** (path + ad-hoc CDHash/DR) that does not inherit prior TCC grants, leaving orphaned TCC rows and requiring re-prompt.
+
+This is confirmed by the ad-hoc production binary `0.5.0-custom.3` (`CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`, `Identifier=catdesk-e6cd98f31dbf91fd`) versus any stable-signed binary.
+
+### Deployment contract (canonical)
+
+Every promotion MUST follow this single chain and no other path:
+
+```text
+accepted tag vX.Y.Z-custom.N
+  → versioned artifact ~/.local/share/catdesk/<version>-custom/bin/catdesk (build provenance)
+  → re-sign with stable signing identity com.hong.catdesk
+  → physical stable runtime ~/.local/share/catdesk/runtime/bin/catdesk (launcher's only target)
+  → launcher exec: spawn /Users/hong/.local/share/catdesk/runtime/bin/catdesk
+```
+
+Rules:
+
+- `runtime/bin/catdesk` MUST be a **physical file**, never a symlink. All checks (`test -L`, `codesign -dv`, `shasum -a 256`) run against the file itself.
+- Rollback is **previous accepted artifact re-signed and copied** to the **same** `runtime/bin/catdesk` path. No versioned path is ever re-introduced as a launcher target after `runtime` is adopted.
+- Staging validation uses `~/.local/share/catdesk/runtime-next/bin/catdesk` (physical copy + sign + verify) before promotion to `runtime/bin`. Do not modify `runtime/bin` or the launcher until the staged file passes all gates and independent audit.
+- `runtime/` and `runtime-next/` are production runtime state and MUST never be committed.
+
+> **Transitional current state (Phase A — pre-activation, not canonical):** the actually running production launchd child is still temporarily `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk` (versioned path, ad-hoc `CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`, `Identifier=catdesk-e6cd98f31dbf91fd`) spawned by the launcher. This is **migration-before-Phase-B evidence only**, recorded to avoid mistaking current reality for the contract — it MUST NOT be read as a permanent rule.
+> **Canonical post-migration state (Phase B):** the launcher's **sole** production target MUST be the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (signed `Identifier=com.hong.catdesk`, `DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`). Versioned artifacts `~/.local/share/catdesk/<version>-custom/bin/catdesk` remain provenance/rollback source only and MUST never be used as a launcher target after `runtime` is adopted.
+
+### Stable signing identity (one-time local bootstrap)
+
+The stable identity that makes the contract TCC-persistent is:
+
+- **Name:** `CatDesk Local Code Signing`
+- **Identifier:** `com.hong.catdesk` (passed as `codesign --identifier com.hong.catdesk`)
+- **Certificate SHA-1 (non-secret):** `7F453106476B0DA6B2FEDBC4BC6F81B8C9ACA51A`
+- **Certificate SHA-256 (non-secret):** `B5705686206499D677B6AF20C470D7C4C7A3E51BE1203738F2DA3F9BC8D3B043`
+- **Subject (non-secret):** `CN=CatDesk Local Code Signing, OU=CatDesk Local, O=Hong Local, C=TW`
+- **Expiry (non-secret):** `2028-12-04`
+- **Expected DR (non-secret):** `identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`
+- **TeamIdentifier:** `not set` (local self-signed)
+
+Bootstrap is a **one-time local machine operation** that creates the Keychain certificate/keypair on that Mac. The certificate and private key are **local secrets and MUST NOT be committed to Git, stored in this repository, or logged** (no p12, no password, no raw key material — only the non-secret fingerprints/subject/expiry above are recorded). Re-creating or rotating the identity on another machine must preserve the same `Identifier` and must not be treated as an in-repo asset.
+
+### Identity proof (cross-binary DR stability)
+
+Two different binaries signed with this identity were independently verified to share the same DR despite different hashes:
+
+- **A (0.5.0-custom.2 content) signed:** `SHA256=617328bd33dfe7b5d02e4e722c1d0b6db4fdeb3b01b2c096b1b81356bb5f372a`, `CDHash=8ec4dd1bfa00d343aafb80a699a3e265ed2e23f7`, `Identifier=com.hong.catdesk`, `Authority=CatDesk Local Code Signing`
+- **B (0.5.0-custom.3 content) signed:** `SHA256=7e840ab9fc32f38adfa4fb187f92833c24c68fba4881410530053007d83023ac`, `CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`, `Identifier=com.hong.catdesk`, `Authority=CatDesk Local Code Signing`
+- **Both:** `Designated Requirement = identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"` and `codesign --verify --strict --verbose=4` = `valid on disk` + `satisfies its Designated Requirement`.
+
+This proves that a stable certificate + stable identifier yields a **stable DR** that survives binary content changes, which is the TCC-persistence requirement. A physical staging copy from the current accepted `0.5.0-custom.3` signed to `runtime-next/bin/catdesk` must exhibit the same DR (current staging `CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`, `Identifier=com.hong.catdesk`, `DR` as above).
+
+### Verification gate (do not rely on `find-identity` text)
+
+`security find-identity -v -p codesigning` may display `CSSMERR_TP_NOT_TRUSTED` for this local self-signed certificate. That warning is **informational only** and is **NOT a blocker** — empirical `codesign --verify --strict` and DR satisfaction are the gate.
+
+Every deploy/stage operation MUST gate on:
+
+```bash
+codesign --verify --strict --verbose=4 /Users/hong/.local/share/catdesk/runtime-next/bin/catdesk  # or runtime/bin/catdesk
+codesign -dv --verbose=4 /path/to/binary  # Identifier=com.hong.catdesk, Authority=CatDesk Local Code Signing, CDHash matches expected
+codesign -d -r - /path/to/binary          # designated => identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"
+shasum -a 256 /path/to/binary
+test ! -L /path/to/binary                  # must be physical file
+```
+
+Do not accept a binary based solely on `find-identity` listing text; the actual `codesign` verification and expected fingerprint/identifier/DR are required. Trust-policy wording variations do not invalidate the signature.
+
+### TCC cleanup policy
+
+TCC cleanup remains **deferred** until the stable `runtime/bin/catdesk` is activated and accepted. **Never** mutate `~/Library/Application Support/com.apple.TCC/TCC.db` via `sqlite3` or any direct DB write — that is unsupported and may corrupt TCC.
+
+When the one-time cleanup is eventually warranted (post-activation), use only supported paths: **System Settings → Privacy & Security** or `tccutil reset` (e.g., `tccutil reset All com.hong.catdesk` or scoped `Accessibility`/`ScreenCapture`/`Automation` resets) and then re-grant permissions interactively from the stable `runtime` path. Leave versioned-path TCC rows orphaned until that moment; do not pre-clean.
+
 ## Required update workflow for Hermes
 
 When a new stable CatDesk release is approved for evaluation:
@@ -190,7 +267,7 @@ At minimum, verify:
 - traversal and symlink escape attempts are rejected;
 - change tracking remains correct for canonical/external targets;
 - release-specific upstream API/schema/runtime behavior passes;
-- the active launchd child points to the intended versioned custom binary;
+- the active launchd child points to the intended production binary — **transitional Phase A (pre-activation):** temporarily `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk` (versioned path, ad-hoc, migration-before-Phase-B evidence only); **canonical post-migration (Phase B):** MUST be the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (launcher's sole target; versioned artifacts are provenance/rollback source only, never a launcher target);
 - CatDesk does not enter a crash loop;
 - `/Volumes/ExpansionDrive` write/read/delete acceptance passes;
 - Cloudflare tunnel continuity is unchanged;

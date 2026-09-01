@@ -138,6 +138,83 @@ src/workspace_tools.rs
 
 這三個檔名不是永久規則。未來 upstream 架構可能改變，屆時可能需要更少、不同，甚至零個修改。要保存的是 **behavioral contract**，不是舊版檔案配置。
 
+## 穩定 macOS runtime 身份與部署契約（Phase A — ROOT_CAUSE_CONFIRMED）
+
+### Root cause
+
+macOS TCC 以 binary 的有效身份（filesystem path、code signature、CDHash、Designated Requirement）綁定權限。過去部署使用版本化路徑 `~/.local/share/catdesk/<version>-custom/bin/catdesk` 搭配 **ad-hoc** 簽署（`Identifier=catdesk-…`、`Signature=adhoc`、`CDHash=aaa5b…`），每次新版都呈現全新的 TCC 身份（path + ad-hoc CDHash/DR），不會繼承舊授權，導致 TCC rows 孤兒化、每次都要重新彈窗。
+
+已由 ad-hoc production binary `0.5.0-custom.3`（`CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`、`Identifier=catdesk-e6cd98f31dbf91fd`）對比任何穩定簽署 binary 確認此原因。
+
+### 部署契約（canonical）
+
+每次 promotion 都必須走且只走這條鏈路：
+
+```text
+accepted tag vX.Y.Z-custom.N
+  → versioned artifact ~/.local/share/catdesk/<version>-custom/bin/catdesk（build provenance）
+  → 以穩定簽署身份 com.hong.catdesk 重新簽署
+  → 實體穩定 runtime ~/.local/share/catdesk/runtime/bin/catdesk（launcher 唯一目標）
+  → launcher exec: spawn /Users/hong/.local/share/catdesk/runtime/bin/catdesk
+```
+
+規則：
+
+- `runtime/bin/catdesk` 必須是 **實體檔案**，永遠不是 symlink。所有檢查（`test -L`、`codesign -dv`、`shasum -a 256`）都要對檔案本體執行。
+- Rollback 是把 **前一個 accepted artifact 重新簽署並複製** 到同一個 `runtime/bin/catdesk` 路徑。`runtime` 啟用後，launcher 永遠不再指回任何版本化路徑。
+- 驗證階段使用 `~/.local/share/catdesk/runtime-next/bin/catdesk`（實體複製 + 簽署 + 驗證），通過後才 promotion 到 `runtime/bin`。在通過所有 gate 與獨立 audit 前，不得修改 `runtime/bin` 或 launcher。
+- `runtime/` 與 `runtime-next/` 是 production runtime state，**絕對不能 commit**。
+
+> **過渡現況（Phase A — 尚未 activation，非 canonical）：** 目前實際運行的 production launchd child 仍暫時為 `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk`（版本化路徑，ad-hoc `CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`、`Identifier=catdesk-e6cd98f31dbf91fd`），由 launcher 直接 spawn。此為 **migration-before-Phase-B 現況證據**，僅為記錄當下真實狀態，不得解讀為永久規則。
+> **Canonical 未來狀態（Phase B 完成後）：** launcher 的**唯一** production target 必須是實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（簽署 `Identifier=com.hong.catdesk`、`DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`）。版本化產物 `~/.local/share/catdesk/<version>-custom/bin/catdesk` 僅保留為 provenance / rollback source，**不得**再作為 launcher target。
+
+### 穩定簽署身份（一次性本機 bootstrap）
+
+讓契約得以 TCC-persistent 的穩定身份為：
+
+- **Name：** `CatDesk Local Code Signing`
+- **Identifier：** `com.hong.catdesk`（`codesign --identifier com.hong.catdesk`）
+- **Certificate SHA-1（non-secret）：** `7F453106476B0DA6B2FEDBC4BC6F81B8C9ACA51A`
+- **Certificate SHA-256（non-secret）：** `B5705686206499D677B6AF20C470D7C4C7A3E51BE1203738F2DA3F9BC8D3B043`
+- **Subject（non-secret）：** `CN=CatDesk Local Code Signing, OU=CatDesk Local, O=Hong Local, C=TW`
+- **Expiry（non-secret）：** `2028-12-04`
+- **Expected DR（non-secret）：** `identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`
+- **TeamIdentifier：** `not set`（本機 self-signed）
+
+Bootstrap 是在該 Mac 上 **一次性本機操作** 建立 Keychain certificate/keypair。Certificate 與 private key 是 **本機 secret，絕對不得 commit 到 Git、不得寫入本 repository、不得留下 log**（無 p12、無 password、無原始 key material —— 僅記錄上述 non-secret fingerprint/subject/expiry）。在另一台機器重建或輪替身份時，必須保留相同 `Identifier`，且不得視為 repo 內資產。
+
+### 身份實證（跨 binary DR 穩定）
+
+以此身份簽署兩份不同內容的 binary，已獨立驗證 DR 完全相同、即使 hash 不同：
+
+- **A（0.5.0-custom.2 內容）簽署後：** `SHA256=617328bd33dfe7b5d02e4e722c1d0b6db4fdeb3b01b2c096b1b81356bb5f372a`、`CDHash=8ec4dd1bfa00d343aafb80a699a3e265ed2e23f7`、`Identifier=com.hong.catdesk`、`Authority=CatDesk Local Code Signing`
+- **B（0.5.0-custom.3 內容）簽署後：** `SHA256=7e840ab9fc32f38adfa4fb187f92833c24c68fba4881410530053007d83023ac`、`CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`、`Identifier=com.hong.catdesk`、`Authority=CatDesk Local Code Signing`
+- **兩者皆：** `Designated Requirement = identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"` 且 `codesign --verify --strict --verbose=4` = `valid on disk` + `satisfies its Designated Requirement`。
+
+這證明穩定 certificate + 穩定 identifier 能在 binary 內容變動下維持 **穩定 DR**，即 TCC-persistence 的必要條件。由目前 accepted `0.5.0-custom.3` 複製並簽署至 `runtime-next/bin/catdesk` 的實體 staging 亦必須呈現相同 DR（目前 staging `CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`、`Identifier=com.hong.catdesk`、DR 同上）。
+
+### 驗證門檻（不得只看 `find-identity` 文字）
+
+`security find-identity -v -p codesigning` 可能對此本機 self-signed certificate 顯示 `CSSMERR_TP_NOT_TRUSTED`。此 warning 僅為 **資訊提示，不是 blocker** —— 真正的 gate 是 `codesign --verify --strict` 與 DR 滿足度。
+
+每次 deploy/stage 都必須以以下指令為 gate：
+
+```bash
+codesign --verify --strict --verbose=4 /Users/hong/.local/share/catdesk/runtime-next/bin/catdesk  # 或 runtime/bin/catdesk
+codesign -dv --verbose=4 /path/to/binary  # Identifier=com.hong.catdesk, Authority=CatDesk Local Code Signing, CDHash 吻合預期
+codesign -d -r - /path/to/binary          # designated => identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"
+shasum -a 256 /path/to/binary
+test ! -L /path/to/binary                  # 必須是實體檔案
+```
+
+不得僅以 `find-identity` 列表文字作為通過依據；必須核對實際 `codesign` 驗證與預期 fingerprint/identifier/DR。Trust-policy 文字差異不代表簽署失效。
+
+### TCC 清理政策
+
+TCC cleanup 仍 **延後** 至穩定 `runtime/bin/catdesk` 啟用並驗收後。**禁止** 以 `sqlite3` 或任何直接 DB 寫入方式修改 `~/Library/Application Support/com.apple.TCC/TCC.db` —— 該路徑不被支援且可能毀損 TCC。
+
+當（啟用後）確有需要進行一次性清理時，只能走支援路徑：**System Settings → Privacy & Security** 或 `tccutil reset`（例如 `tccutil reset All com.hong.catdesk` 或針對 `Accessibility`/`ScreenCapture`/`Automation` 的範圍 reset），再從穩定的 `runtime` 路徑重新互動授權。在此之前，保留版本化路徑的 TCC rows 為孤兒狀態，不得提前清理。
+
 ## Hermes 必須遵守的更新流程
 
 當漢秦哥批准評估新的 stable CatDesk release：
@@ -188,7 +265,7 @@ src/workspace_tools.rs
 - traversal / symlink escape 被拒絕；
 - canonical/external target 的 change tracking 正確；
 - 新 release 的 API/schema/runtime behavior 正常；
-- launchd active child 指向正確的 versioned custom binary；
+- launchd active child 指向正確的 production binary — **過渡 Phase A（尚未 activation）：** 暫時為 `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk`（版本化路徑、ad-hoc，僅 migration-before-Phase-B 現況證據）；**canonical 未來狀態（Phase B 完成後）：** 必須是實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（launcher 唯一目標；版本化產物僅為 provenance/rollback source，不得作 launcher target）；
 - CatDesk 沒有 crash loop；
 - `/Volumes/ExpansionDrive` write/read/delete acceptance pass；
 - Cloudflare tunnel continuity 不受影響；
