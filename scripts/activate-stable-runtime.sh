@@ -73,6 +73,48 @@ resolve_domain() {
   return 1
 }
 
+get_wrapper_pid() {
+  _domain="$1"
+  launchctl print "$_domain/com.hong.catdesk" 2>&1 | awk '/^[[:space:]]*pid =/ {print $3}'
+}
+
+get_wrapper_runs() {
+  _domain="$1"
+  launchctl print "$_domain/com.hong.catdesk" 2>&1 | awk '/^[[:space:]]*runs =/ {print $3}'
+}
+
+# Precise child PID: PPID==wrapper PID AND first executable token == STABLE_RUNTIME
+# Uses macOS ps -axo pid=,ppid=,command= to avoid grep substring matching controller itself.
+get_stable_child_pid() {
+  _wpid="$1"
+  _target="$2"
+  ps -axo pid=,ppid=,command= 2>&1 | awk -v wpid="$_wpid" -v target="$_target" '
+    {
+      pid=$1; ppid=$2; $1=""; $2=""; sub(/^ +/, "", $0);
+      n=split($0, a, /[[:space:]]+/); exe=a[1];
+      if (ppid==wpid && exe==target) { print pid; found=1; exit 0 }
+    }
+    END { if (!found) exit 1 }
+  '
+}
+
+is_launcher_stable() {
+  _target="$1"
+  _launcher="$2"
+  if [ ! -f "$_launcher" ]; then return 1; fi
+  _total=$(grep -cE '^[[:space:]]*spawn[[:space:]]+.*catdesk' "$_launcher" 2>/dev/null || true)
+  if [ "$_total" != "1" ]; then return 1; fi
+  _matched=$(awk -v target="$_target" '
+    /^[[:space:]]*spawn[[:space:]]+/ {
+      line=$0; sub(/^[[:space:]]*spawn[[:space:]]+/, "", line);
+      n=split(line, a, /[[:space:]]+/); exe=a[1];
+      if (exe==target) c++;
+    }
+    END { if (c==1) print "yes" }
+  ' "$_launcher")
+  [ "$_matched" = "yes" ]
+}
+
 do_preflight() {
   echo "== preflight =="
   echo "STABLE_RUNTIME=$STABLE_RUNTIME"
@@ -146,11 +188,82 @@ do_activate() {
   _domain=$(resolve_domain) || return 1
   echo "domain=$_domain"
 
-  # Snapshot before
-  _before_pid=$(launchctl print "$_domain/com.hong.catdesk" 2>&1 | awk '/^[[:space:]]*pid =/ {print $3}')
-  _before_runs=$(launchctl print "$_domain/com.hong.catdesk" 2>&1 | awk '/^[[:space:]]*runs =/ {print $3}')
+  # Snapshot before (wrapper pid + runs)
+  _before_pid=$(get_wrapper_pid "$_domain" 2>&1 || true)
+  _before_runs=$(get_wrapper_runs "$_domain" 2>&1 || true)
   echo "before pid=$_before_pid runs=$_before_runs"
 
+  # --- idempotency safety belt (must be before any launcher mutation/kickstart) ---
+  # ponytail: idempotency check — launcher precisely stable AND child precisely stable => no kickstart
+  # Test hook: CATDESK_TEST_FORCE_ALREADY_ACTIVE=1 forces this branch without touching production launcer
+  _idempotent_launcher=0
+  _idempotent_child=0
+  if [ "${CATDESK_TEST_FORCE_ALREADY_ACTIVE:-}" = "1" ]; then
+    echo "TEST_HOOK: forcing already-active branch (CATDESK_TEST_FORCE_ALREADY_ACTIVE=1)"
+    _idempotent_launcher=1
+    _idempotent_child=1
+  else
+    if is_launcher_stable "$STABLE_RUNTIME" "$LAUNCHER"; then
+      echo "check: launcher already precisely points to stable runtime"
+      _idempotent_launcher=1
+    else
+      echo "check: launcher not yet stable"
+    fi
+    if [ "$_idempotent_launcher" -eq 1 ]; then
+      _current_wrapper_pid=$(get_wrapper_pid "$_domain" 2>&1 || true)
+      if [ -n "$_current_wrapper_pid" ] && [ "$_current_wrapper_pid" != "0" ]; then
+        if _child_pid_probe=$(get_stable_child_pid "$_current_wrapper_pid" "$STABLE_RUNTIME" 2>&1); then
+          echo "check: stable child PID $_child_pid_probe already under wrapper $_current_wrapper_pid"
+          _idempotent_child=1
+          _idempotent_child_pid="$_child_pid_probe"
+        else
+          echo "check: launcher stable but no stable child under wrapper $_current_wrapper_pid (previous attempt interrupted?)"
+        fi
+      else
+        echo "check: cannot resolve wrapper pid for idempotency check"
+      fi
+    fi
+  fi
+
+  if [ "$_idempotent_launcher" -eq 1 ] && [ "$_idempotent_child" -eq 1 ]; then
+    echo "ALREADY_ACTIVE: launcher and child already stable — skipping kickstart"
+    # Directly do 30s triple stability + TCP gate (allow test short via CATDESK_TEST_STABILITY_SECS)
+    _stability_secs="${CATDESK_TEST_STABILITY_SECS:-30}"
+    # Establish baseline from current live state (not from _before)
+    _base_wrapper_pid=$(get_wrapper_pid "$_domain" 2>&1 || true)
+    _base_runs=$(get_wrapper_runs "$_domain" 2>&1 || true)
+    _base_child_pid=$(get_stable_child_pid "$_base_wrapper_pid" "$STABLE_RUNTIME" 2>&1 || true)
+    if [ -z "$_base_wrapper_pid" ] || [ -z "$_base_runs" ] || [ -z "$_base_child_pid" ]; then
+      echo "FAIL: already-active baseline incomplete (pid=$_base_wrapper_pid runs=$_base_runs child=$_base_child_pid)" >&2
+      return 1
+    fi
+    echo "already-active baseline wrapper pid=$_base_wrapper_pid runs=$_base_runs child pid=$_base_child_pid"
+    echo "stability gate: ${_stability_secs}s wrapper PID+runs+child unchanged (already-active)"
+    sleep "$_stability_secs"
+    _cur_wrapper_pid=$(get_wrapper_pid "$_domain" 2>&1 || true)
+    _cur_runs=$(get_wrapper_runs "$_domain" 2>&1 || true)
+    _cur_child_pid=$(get_stable_child_pid "$_cur_wrapper_pid" "$STABLE_RUNTIME" 2>&1 || true)
+    echo "after ${_stability_secs}s wrapper pid=$_cur_wrapper_pid runs=$_cur_runs child pid=$_cur_child_pid (baseline wrapper=$_base_wrapper_pid runs=$_base_runs child=$_base_child_pid)"
+    if [ "$_cur_wrapper_pid" != "$_base_wrapper_pid" ] || [ "$_cur_runs" != "$_base_runs" ] || [ "$_cur_child_pid" != "$_base_child_pid" ]; then
+      echo "FAIL: stability gate (already-active) — wrapper PID/runs/child changed (wrapper $_base_wrapper_pid->$_cur_wrapper_pid runs $_base_runs->$_cur_runs child $_base_child_pid->$_cur_child_pid)" >&2
+      return 1
+    fi
+    # Child PPID/exe already verified by get_stable_child_pid (PPID==wrapper && exe==target), but explicit re-check
+    if ! get_stable_child_pid "$_cur_wrapper_pid" "$STABLE_RUNTIME" 2>&1 | grep -qx "$_cur_child_pid"; then
+      echo "FAIL: already-active child PPID/exe no longer stable" >&2
+      return 1
+    fi
+    echo "OK: ${_stability_secs}s stability PASS (already-active)"
+    if ! nc -z 127.0.0.1 3200 2>&1; then
+      echo "FAIL: nc -z 127.0.0.1 3200 failed (already-active)" >&2
+      return 1
+    fi
+    echo "OK: nc -z 127.0.0.1 3200 succeeded"
+    echo "ALREADY_ACTIVE PASS — no kickstart performed; post-activation acceptance to be done by ChatGPT after reconnect"
+    return 0
+  fi
+
+  # Not already-active: proceed with backup, atomic launcher edit, single kickstart
   # Backup with private perms
   umask 077
   _ts=$(date +%Y%m%d-%H%M%S)
@@ -174,28 +287,50 @@ do_activate() {
   chmod 600 "$BACKUP_DIR"/* 2>&1 || true
   echo "OK: backup at $BACKUP_DIR"
 
-  # Only modify launcher spawn target to canonical stable runtime
-  # macOS sed -i '' ; replace any versioned or old path containing catdesk/.../bin/catdesk with stable path
-  # The launcher line is: spawn /Users/hong/.local/share/catdesk/.../bin/catdesk
-  if ! grep -qF "$STABLE_RUNTIME" "$LAUNCHER"; then
-    # Replace spawn target
-    # Use portable approach: create tmp then mv
-    _tmp_launcher="$BACKUP_DIR/launcher.tmp"
-    # Replace first occurrence of spawn <path> with spawn STABLE_RUNTIME
-    # Keep rest of file intact
-    sed "s|spawn .*catdesk|spawn $STABLE_RUNTIME|g" "$LAUNCHER" > "$_tmp_launcher"
-    # Verify tmp contains stable path
-    if ! grep -qF "$STABLE_RUNTIME" "$_tmp_launcher"; then
-      echo "FAIL: launcher edit did not inject stable runtime" >&2; return 1
+  # Only modify launcher spawn target to canonical stable runtime — atomic replace
+  if ! is_launcher_stable "$STABLE_RUNTIME" "$LAUNCHER"; then
+    echo "launcher needs update — performing atomic replace"
+    _launcher_dir=$(dirname "$LAUNCHER")
+    _tmp_launcher="$_launcher_dir/.catdesk-launch.tmp.$$"
+    # Ensure exactly one spawn catdesk line — otherwise FAIL and do not write
+    _spawn_count=$(grep -cE '^[[:space:]]*spawn[[:space:]]+.*catdesk' "$LAUNCHER" 2>/dev/null || true)
+    if [ "$_spawn_count" != "1" ]; then
+      echo "FAIL: launcher must contain exactly one spawn catdesk line (found $_spawn_count)" >&2
+      echo "HINT: backup retained at $BACKUP_DIR ; no launcher write" >&2
+      return 1
     fi
-    cat "$_tmp_launcher" > "$LAUNCHER"
-    chmod 755 "$LAUNCHER" 2>&1 || chmod 700 "$LAUNCHER" 2>&1 || true
-    echo "OK: launcher updated to $STABLE_RUNTIME"
+    # Generate temp launcher with precise replacement
+    awk -v target="$STABLE_RUNTIME" '
+      /^[[:space:]]*spawn[[:space:]]+.*catdesk/ {
+        print "spawn " target; replaced=1; next
+      }
+      { print }
+      END { if (replaced!=1) exit 1 }
+    ' "$LAUNCHER" > "$_tmp_launcher" || {
+      echo "FAIL: launcher edit failed (awk)" >&2
+      rm -f "$_tmp_launcher" 2>/dev/null || true
+      return 1
+    }
+    # Verify temp contains exactly one precise spawn target and no other catdesk spawn
+    if ! is_launcher_stable "$STABLE_RUNTIME" "$_tmp_launcher"; then
+      echo "FAIL: launcher edit verification — temp does not precisely contain stable runtime" >&2
+      cat "$_tmp_launcher" >&2 || true
+      rm -f "$_tmp_launcher" 2>/dev/null || true
+      return 1
+    fi
+    chmod 755 "$_tmp_launcher" 2>&1 || chmod 700 "$_tmp_launcher" 2>&1 || true
+    # Atomic move (same filesystem)
+    if ! mv -f "$_tmp_launcher" "$LAUNCHER" 2>&1; then
+      echo "FAIL: atomic mv to launcher failed" >&2
+      rm -f "$_tmp_launcher" 2>/dev/null || true
+      return 1
+    fi
+    echo "OK: launcher atomically updated to $STABLE_RUNTIME"
   else
-    echo "OK: launcher already points to stable runtime"
+    echo "OK: launcher already points to stable runtime (atomic check)"
   fi
 
-  # Exactly ONE kickstart -k
+  # Exactly ONE kickstart -k — ponytail: no retry, no auto-rollback
   echo "kickstart -k $_domain/com.hong.catdesk (single, no retry)"
   if ! launchctl kickstart -k "$_domain/com.hong.catdesk" 2>&1; then
     echo "FAIL: kickstart failed" >&2
@@ -204,46 +339,57 @@ do_activate() {
   fi
   echo "OK: kickstart issued"
 
-  # Replacement verification
+  # Replacement verification — precise: wrapper PID + PPID + exe token exact
   echo "waiting for replacement child..."
   sleep 3
-  # Confirm new catdesk executable path is stable runtime (macOS ps way)
-  _found_stable=0
+  _post_wrapper_pid=$(get_wrapper_pid "$_domain" 2>&1 || true)
+  _found_stable=""
   for _i in 1 2 3 4 5; do
-    if ps aux 2>&1 | grep -F "$STABLE_RUNTIME" | grep -v grep | grep -q catdesk; then
-      _found_stable=1; break
+    if _found_stable=$(get_stable_child_pid "$_post_wrapper_pid" "$STABLE_RUNTIME" 2>&1); then
+      if [ -n "$_found_stable" ]; then break; fi
     fi
     sleep 2
+    _post_wrapper_pid=$(get_wrapper_pid "$_domain" 2>&1 || true)
   done
-  if [ "$_found_stable" -eq 0 ]; then
-    echo "FAIL: replacement verification — no catdesk process with stable path $STABLE_RUNTIME" >&2
-    ps aux 2>&1 | grep catdesk | grep -v grep >&2 || true
+  if [ -z "$_found_stable" ]; then
+    echo "FAIL: replacement verification — no stable child with PPID=$_post_wrapper_pid and exe=$STABLE_RUNTIME" >&2
+    ps -axo pid=,ppid=,command= 2>&1 | grep -F catdesk | grep -v grep >&2 || true
     echo "HINT: backup at $BACKUP_DIR ; no second kickstart, no auto-rollback" >&2
     return 1
   fi
-  echo "OK: replacement child shows stable runtime path"
+  echo "OK: replacement child PID $_found_stable (PPID=$_post_wrapper_pid exe=$STABLE_RUNTIME)"
 
-  # Also verify via launchctl pid changed or child presence
-  _post_pid=$(launchctl print "$_domain/com.hong.catdesk" 2>&1 | awk '/^[[:space:]]*pid =/ {print $3}')
-  _post_runs=$(launchctl print "$_domain/com.hong.catdesk" 2>&1 | awk '/^[[:space:]]*runs =/ {print $3}')
-  echo "post pid=$_post_pid runs=$_post_runs (before pid=$_before_pid runs=$_before_runs)"
+  # Baseline for stability: wrapper pid, runs, child pid
+  _post_runs=$(get_wrapper_runs "$_domain" 2>&1 || true)
+  echo "post pid=$_post_wrapper_pid runs=$_post_runs child=$_found_stable (before pid=$_before_pid runs=$_before_runs)"
 
-  # 30s PID+runs stability: baseline is post-restart
-  _base_pid="$_post_pid"
+  _base_wrapper_pid="$_post_wrapper_pid"
   _base_runs="$_post_runs"
-  echo "stability gate: 30s PID+runs unchanged (baseline pid=$_base_pid runs=$_base_runs)"
+  _base_child_pid="$_found_stable"
+  echo "stability gate: 30s wrapper PID+runs+child unchanged (baseline wrapper=$_base_wrapper_pid runs=$_base_runs child=$_base_child_pid)"
   sleep 30
-  _cur_pid=$(launchctl print "$_domain/com.hong.catdesk" 2>&1 | awk '/^[[:space:]]*pid =/ {print $3}')
-  _cur_runs=$(launchctl print "$_domain/com.hong.catdesk" 2>&1 | awk '/^[[:space:]]*runs =/ {print $3}')
-  echo "after 30s pid=$_cur_pid runs=$_cur_runs"
-  if [ "$_cur_pid" != "$_base_pid" ] || [ "$_cur_runs" != "$_base_runs" ]; then
-    echo "FAIL: stability gate — PID or runs changed within 30s (pid $_base_pid->$_cur_pid runs $_base_runs->$_cur_runs)" >&2
+  _cur_wrapper_pid=$(get_wrapper_pid "$_domain" 2>&1 || true)
+  _cur_runs=$(get_wrapper_runs "$_domain" 2>&1 || true)
+  _cur_child_pid=$(get_stable_child_pid "$_cur_wrapper_pid" "$STABLE_RUNTIME" 2>&1 || true)
+  echo "after 30s wrapper pid=$_cur_wrapper_pid runs=$_cur_runs child pid=$_cur_child_pid"
+  if [ -z "$_cur_wrapper_pid" ] || [ -z "$_cur_runs" ] || [ -z "$_cur_child_pid" ]; then
+    echo "FAIL: stability gate — could not resolve wrapper/runs/child after 30s" >&2
     echo "HINT: backup at $BACKUP_DIR ; no retry, no auto-rollback" >&2
     return 1
   fi
-  echo "OK: 30s stability PASS"
+  if [ "$_cur_wrapper_pid" != "$_base_wrapper_pid" ] || [ "$_cur_runs" != "$_base_runs" ] || [ "$_cur_child_pid" != "$_base_child_pid" ]; then
+    echo "FAIL: stability gate — wrapper PID/runs/child changed within 30s (wrapper $_base_wrapper_pid->$_cur_wrapper_pid runs $_base_runs->$_cur_runs child $_base_child_pid->$_cur_child_pid)" >&2
+    echo "HINT: backup at $BACKUP_DIR ; no retry, no auto-rollback" >&2
+    return 1
+  fi
+  # Extra PPID/exe re-verification (already guaranteed by get_stable_child_pid but explicit)
+  if ! get_stable_child_pid "$_cur_wrapper_pid" "$STABLE_RUNTIME" 2>&1 | grep -qx "$_cur_child_pid"; then
+    echo "FAIL: stability gate — child PPID/exe no longer matches stable target" >&2
+    return 1
+  fi
+  echo "OK: 30s stability PASS (wrapper+runs+child)"
 
-  # TCP listener check (no /health, no /mcp, no curl)
+  # TCP listener check (no /health, no /mcp, no curl) — after stability
   if ! nc -z 127.0.0.1 3200 2>&1; then
     echo "FAIL: nc -z 127.0.0.1 3200 failed" >&2
     return 1
