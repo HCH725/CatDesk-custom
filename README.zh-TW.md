@@ -252,6 +252,39 @@ TCC cleanup 仍 **延後** 至穩定 `runtime/bin/catdesk` 啟用並驗收後。
 - local MCP health/protocol 與設定的 public MCP endpoint 必須分開驗證。Cloudflare 是 active public path 時，stale/legacy ngrok endpoint 的 quota/error 只能記為 stale probe：不是 production ingress evidence，也不得驅動 rollback 或任何 Cloudflare 變更。
 - 只有在 one-shot controller 已不存在、intended child 已驗證、crash-loop gate 穩定、local 與 active-public MCP 都通過，且 rollback provenance 已讀回後，才可宣告 `READY_FOR_ACTIVATION`。
 
+## 穩定 runtime Phase B 控制器（2026-09-01 — remediation，僅 process-level activation）
+
+首次 Phase B 失敗的兩個 root cause：（1）`launchctl submit` job 被再次分發、失控重跑；（2）controller 寫死 `/health`、`/mcp` 探針，實際 secret route 回 404 卻被誤判為 binary 健康失敗。
+
+Canonical Phase B controller 契約（僅 process-level activation）：
+
+- Controller 永遠不取得 MCP secret slug、不做 MCP discover / command execution，不讀 `~/.catdesk/config.toml` 的 slug/token。
+- `/health`、`/mcp` 不可寫死；HTTP 404 不是 controller 的 binary-health failure，secret route 不在 controller 範圍內。
+- `launchctl submit` 禁止用於 activation one-shot，會被 launchd 再次分發。
+- 遠端執行必須脫離 CatDesk process tree 時（ChatGPT→CatDesk→Hermes，前景 controller 會隨 CatDesk 一起消失），使用經過無害 `run=1` probe 驗證的 **ephemeral `launchctl bootstrap` plist**：unique label `com.hong.catdesk.*`、`RunAtLoad=true`、`KeepAlive=false`、無 `StartInterval`/`WatchPaths`/`StartCalendarInterval`，plist 置於受限 `~/.catdesk/activation/`（0700 目錄、0600 檔案），絕不放入 `~/Library/LaunchAgents`。bootstrap 後該 job 必須只執行一次；清理由重連後的 ChatGPT 執行 `launchctl bootout <domain>/<label>`（或 `bootout <domain> <plist>`），controller 不得自行重啟。
+- Single-flight 使用 `/usr/bin/lockf` 的 `lockf -k -t 0` wrapper re-exec（macOS 無 `flock`），第二個並發實例必須立即 busy 失敗（例如 75、`already locked`），不排隊。
+- Controller 最多只允許 **一次** `launchctl kickstart -k <resolved-domain>/com.hong.catdesk`，無 retry loop、無 auto-rollback；任一 gate 失敗即非 0 退出，保留 private backup，外部分由 ChatGPT 判斷。
+- Controller 的 gates 僅為 process-level：target path 為實體檔案（非 symlink）、`codesign Identifier=com.hong.catdesk` 與 `DR` 有效（`identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`）、動態解析 launchd domain（`gui/<uid>` 或 `user/<uid>`，不 hard-code）、launcher/plist 存在、`nc`/`TCP` 工具可用（`nc -z 127.0.0.1 3200`）；不得 `curl` `/health`/`/mcp`，不得讀/輸出任何 slug。
+- `--activate` 後的 replacement 驗證採 macOS 原生 path 檢查（`ps aux` 顯示穩定 runtime 路徑），加上重啟後 `PID`+`runs` 30 秒穩定性（`launchctl print` baseline 對比 30 秒後不變）與 `nc -z 127.0.0.1 3200` 成功。
+- 啟用後的 **acceptance**（MCP discover、command execution、Cloudflare continuity、read/write roots/boundaries、ledger）由 ChatGPT 以 `catdesk_instruction` 重連後另行驗收；失敗由外部判斷，rollback 由外部明確決定（將前一 accepted versioned artifact 重新簽署/複製回同一 `runtime/bin/catdesk` 路徑）。
+- 不可在 repository、skill、script 輸出或 logs 中記錄任何 secret slug、token 或 tunnel credential。
+
+Canonical controller 產物：`scripts/activate-stable-runtime.sh`（預設 `--preflight`，需顯式 `--activate`）。遠端脫離所需的 ephemeral bootstrap 流程記載於此與 `skills/catdesk-release-update/SKILL.md`，不產生 daemon/service。
+
+遠端 activation 的 ephemeral bootstrap（當 controller 必須比 CatDesk 活得更久時）：
+
+```bash
+# 1. 已有無害 run=1 probe 證實此 pattern 的語意 — 不要用 launchctl submit。
+# 2. 建受限 staging：umask 077; mkdir -p ~/.catdesk/activation（0700）
+# 3. 寫 plist 到 ~/.catdesk/activation/com.hong.catdesk.activate.<timestamp>.plist（0600）：
+#    Label=com.hong.catdesk.activate.<timestamp>，ProgramArguments=[/path/to/scripts/activate-stable-runtime.sh --activate]，
+#    RunAtLoad=true，KeepAlive=false，無 StartInterval/WatchPaths/StartCalendarInterval
+# 4. 動態解析 domain：gui/<uid> 若 launchctl print gui/<uid>/com.hong.catdesk 成功否則 user/<uid>
+# 5. launchctl bootstrap <domain> <plist>（unique label，僅跑一次）
+# 6. 重連後 ChatGPT 驗 replacement + 30 秒穩定 + nc -z 127.0.0.1 3200，再做 MCP/Cloudflare acceptance
+# 7. 清理：launchctl bootout <domain>/<label>（或 bootout <domain> <plist>）；controller 永不自行 bootout/重啟
+```
+
 ## Acceptance checklist
 
 能編譯不代表升級成功。至少必須確認：
