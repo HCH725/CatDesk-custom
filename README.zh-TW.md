@@ -96,7 +96,8 @@ Production CatDesk 必須把既有 MCP token accounting 以最小化的本機 ev
 必須保留的語意：
 
 - `config.toml` 既有累積 usage totals 繼續保存；ledger 是補充，不取代原本 totals。
-- 每次記錄 MCP tool call 時 append 一行 JSONL，穩定欄位為 `eventId`、`timestampMs`、`inputTokens`、`outputTokens`、`bucket`。
+- 每次記錄 MCP tool call 時 append 一行 JSONL，穩定欄位為 `eventId`、`timestampMs`、`inputTokens`、`outputTokens`、`bucket`、`pricingModel`。
+- `pricingModel` 記錄供下游估算成本使用的 ChatGPT 模型 identity；CatDesk 在 UI 仍維持獨立的 `catdesk-mcp` usage source。ChatGPT runtime 換新模型時只更新版本化的 `CURRENT_USAGE_PRICING_MODEL`，不得從 accounting `bucket` 猜測模型。
 - `eventId` 必須對每個 recorded event 唯一；即使 ledger row 被移動或重排，也要維持下游 dedup 的穩定 identity。
 - 每行不要重複保存可推導的 `totalTokens`。
 - Production 假設 CatDesk daemon 是 ledger 唯一 writer；若 crash 留下截斷的最後一行，下次 append 必須先補 newline 隔離殘片，再寫入下一個完整 event。
