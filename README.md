@@ -165,6 +165,9 @@ Rules:
 - Staging validation uses `~/.local/share/catdesk/runtime-next/bin/catdesk` (physical copy + sign + verify) before promotion to `runtime/bin`. Do not modify `runtime/bin` or the launcher until the staged file passes all gates and independent audit.
 - `runtime/` and `runtime-next/` are production runtime state and MUST never be committed.
 
+> **Transitional current state (Phase A — pre-activation, not canonical):** the actually running production launchd child is still temporarily `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk` (versioned path, ad-hoc `CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`, `Identifier=catdesk-e6cd98f31dbf91fd`) spawned by the launcher. This is **migration-before-Phase-B evidence only**, recorded to avoid mistaking current reality for the contract — it MUST NOT be read as a permanent rule.
+> **Canonical post-migration state (Phase B):** the launcher's **sole** production target MUST be the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (signed `Identifier=com.hong.catdesk`, `DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`). Versioned artifacts `~/.local/share/catdesk/<version>-custom/bin/catdesk` remain provenance/rollback source only and MUST never be used as a launcher target after `runtime` is adopted.
+
 ### Stable signing identity (one-time local bootstrap)
 
 The stable identity that makes the contract TCC-persistent is:
@@ -264,7 +267,7 @@ At minimum, verify:
 - traversal and symlink escape attempts are rejected;
 - change tracking remains correct for canonical/external targets;
 - release-specific upstream API/schema/runtime behavior passes;
-- the active launchd child points to the intended versioned custom binary;
+- the active launchd child points to the intended production binary — **transitional Phase A (pre-activation):** temporarily `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk` (versioned path, ad-hoc, migration-before-Phase-B evidence only); **canonical post-migration (Phase B):** MUST be the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (launcher's sole target; versioned artifacts are provenance/rollback source only, never a launcher target);
 - CatDesk does not enter a crash loop;
 - `/Volumes/ExpansionDrive` write/read/delete acceptance passes;
 - Cloudflare tunnel continuity is unchanged;

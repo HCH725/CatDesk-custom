@@ -165,6 +165,9 @@ accepted tag vX.Y.Z-custom.N
 - 驗證階段使用 `~/.local/share/catdesk/runtime-next/bin/catdesk`（實體複製 + 簽署 + 驗證），通過後才 promotion 到 `runtime/bin`。在通過所有 gate 與獨立 audit 前，不得修改 `runtime/bin` 或 launcher。
 - `runtime/` 與 `runtime-next/` 是 production runtime state，**絕對不能 commit**。
 
+> **過渡現況（Phase A — 尚未 activation，非 canonical）：** 目前實際運行的 production launchd child 仍暫時為 `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk`（版本化路徑，ad-hoc `CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`、`Identifier=catdesk-e6cd98f31dbf91fd`），由 launcher 直接 spawn。此為 **migration-before-Phase-B 現況證據**，僅為記錄當下真實狀態，不得解讀為永久規則。
+> **Canonical 未來狀態（Phase B 完成後）：** launcher 的**唯一** production target 必須是實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（簽署 `Identifier=com.hong.catdesk`、`DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`）。版本化產物 `~/.local/share/catdesk/<version>-custom/bin/catdesk` 僅保留為 provenance / rollback source，**不得**再作為 launcher target。
+
 ### 穩定簽署身份（一次性本機 bootstrap）
 
 讓契約得以 TCC-persistent 的穩定身份為：
@@ -262,7 +265,7 @@ TCC cleanup 仍 **延後** 至穩定 `runtime/bin/catdesk` 啟用並驗收後。
 - traversal / symlink escape 被拒絕；
 - canonical/external target 的 change tracking 正確；
 - 新 release 的 API/schema/runtime behavior 正常；
-- launchd active child 指向正確的 versioned custom binary；
+- launchd active child 指向正確的 production binary — **過渡 Phase A（尚未 activation）：** 暫時為 `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk`（版本化路徑、ad-hoc，僅 migration-before-Phase-B 現況證據）；**canonical 未來狀態（Phase B 完成後）：** 必須是實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（launcher 唯一目標；版本化產物僅為 provenance/rollback source，不得作 launcher target）；
 - CatDesk 沒有 crash loop；
 - `/Volumes/ExpansionDrive` write/read/delete acceptance pass；
 - Cloudflare tunnel continuity 不受影響；

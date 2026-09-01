@@ -21,9 +21,9 @@ Production CatDesk must never track `main` directly. Each level is reviewed befo
 
 1. **Upstream stable tag** — the official `Xeift/CatDesk` stable release (tag + commit + release notes + official artifact) is the top source of truth for release behavior.
 2. **Downstream private repository** — reviewed `main` and the current accepted `vX.Y.Z-custom.N` tag in `HCH725/CatDesk-custom` are the source of truth for downstream policy. Nothing is accepted by merge or tag until it has passed acceptance and independent audit.
-3. **Local production deployment** — the versioned custom binary installed from the accepted tag, e.g. `/Users/hong/.local/share/catdesk/<version>-custom/bin/catdesk`, is what actually runs.
+3. **Local production deployment** — the **physical stable runtime** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (launcher's sole canonical target post-migration, Phase B) built from the versioned artifact `~/.local/share/catdesk/<version>-custom/bin/catdesk` (accepted-tag provenance / rollback source) is what actually runs in the canonical state. **Transitional current state (Phase A — pre-activation, not canonical):** the actually running production child is still temporarily `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk` (versioned path, ad-hoc) spawned by the launcher — this is migration-before-Phase-B evidence only and MUST NOT be read as the canonical contract. Versioned artifacts remain provenance/rollback source only, never a launcher target after `runtime` is adopted.
 
-Update flow: **upstream stable tag → downstream reviewed main/accepted tag → local production deployment**. Production is built and deployed from the accepted tag, never by following `main` or any old worktree.
+Update flow (canonical): **accepted tag `vX.Y.Z-custom.N` → versioned artifact `~/.local/share/catdesk/<version>-custom/bin/catdesk` (provenance/rollback source) → sign/copy with stable identity `com.hong.catdesk` → physical stable runtime `~/.local/share/catdesk/runtime/bin/catdesk` → launcher**. Production is built from the accepted tag via this chain, never by following `main` or any old worktree.
 
 ## Stable macOS runtime identity and deployment contract (Phase A — ROOT_CAUSE_CONFIRMED)
 
