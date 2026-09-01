@@ -246,11 +246,44 @@ The 2026-08-31 `v0.5.0-custom.1` prepare/rollback incident established these man
 
 - Never submit an activation helper as a `KeepAlive` launchd service; it can create an unbounded restart/browser loop even when the binary itself is healthy.
 - Before activation, establish the owning launchd domain from `launchctl print`, `launchctl list`, and plist registration evidence. Do not hard-code `gui/<uid>` or `user/<uid>`; a missing service in a guessed domain is a domain/registration mismatch, not evidence of a v0.5 runtime regression.
-- Keep the foreground or one-shot controller outside the CatDesk process tree: snapshot launcher/plist hashes, change only the launcher target, provide self-contained rollback, and kickstart only CatDesk.
+- Keep the foreground or one-shot controller outside the CatDesk process tree: snapshot launcher/plist hashes, change only the launcher target, provide self-contained backup/rollback recipe (launcher/plist snapshots + provenance), and kickstart only CatDesk. Controller **never auto-rolls-back** — rollback is an explicit external ChatGPT decision.
 - `launchctl kickstart -k` intentionally terminates the child. `SIGTERM` and Expect `spawn id ... not open` are restart evidence, not proof that the new binary crashed.
-- After restart, verify the replacement child path, health/discover, crash-loop stability, root invariants, and Cloudflare continuity.
-- Validate local MCP health/protocol calls separately from the configured public MCP endpoint. When Cloudflare is the active public path, a stale or legacy ngrok endpoint quota/error is only a stale probe: it is not production ingress evidence and must not drive rollback or any Cloudflare change.
-- Declare `READY_FOR_ACTIVATION` only after the one-shot controller is absent, the intended child is verified, the crash-loop gate is stable, local and active-public MCP gates pass, and rollback provenance has been read back.
+- After restart, controller verifies only process-level gates: precise replacement child (PPID==wrapper + exe==stable runtime), 30s triple stability (wrapper PID + `runs` + stable child PID unchanged, PPID/exe still stable), and `nc -z 127.0.0.1 3200`. Health/discover, root invariants and Cloudflare continuity are **post-activation acceptance** by reconnected ChatGPT, not controller gates.
+- Local MCP and public ingress validation are post-activation acceptance (ChatGPT after reconnect). When Cloudflare is the active public path, a stale or legacy ngrok endpoint quota/error is only a stale probe: it is not production ingress evidence and must not drive rollback or any Cloudflare change.
+- Two-phase readiness: controller preflight PASS is `READY_FOR_PROCESS_ACTIVATION` (activation may proceed); controller success (precise child + 30s triple stability + TCP PASS, or `ALREADY_ACTIVE` idempotent PASS) is `READY_FOR_POST_ACTIVATION_ACCEPTANCE`; only after reconnected ChatGPT verifies MCP/command/Cloudflare/roots all PASS is `PRODUCTION_ACCEPTED`.
+
+## Stable runtime Phase B controller (2026-09-01 — remediation, process-level activation only)
+
+The first Phase B attempt failed due to two root causes: (1) a `launchctl submit` job was re-dispatched and re-ran uncontrollably; (2) the controller hard-coded `/health` and `/mcp` probes, which returned 404 for the real secret-routed endpoint and was mis-evaluated as binary health failure.
+
+Canonical Phase B controller contract (process-level activation only):
+
+- Controller never obtains the MCP secret slug and never performs MCP discover or command execution. It does not read `~/.catdesk/config.toml` slug/token.
+- `/health` and `/mcp` paths must never be hard-coded. HTTP 404 is not a controller binary-health failure; secret routes are outside controller scope.
+- `launchctl submit` is forbidden for activation one-shots. It can be re-dispatched by launchd.
+- When remote execution must survive the CatDesk process tree (ChatGPT→CatDesk→Hermes, where a foreground controller dies with CatDesk), use an **ephemeral `launchctl bootstrap` plist** proven by a harmless `run=1` probe: unique label `com.hong.catdesk.*`, `RunAtLoad=true`, `KeepAlive=false`, no `StartInterval`/`WatchPaths`/`StartCalendarInterval`, plist under restricted `~/.catdesk/activation/` (0700 dir, 0600 file), never under `~/Library/LaunchAgents`. After bootstrap the job must run exactly once; cleanup is `launchctl bootout <domain>/<label>` (or `bootout <domain> <plist>`) by the reconnected ChatGPT, never self-restarted by the controller.
+- Single-flight uses `/usr/bin/lockf` with `lockf -k -t 0` wrapper re-exec (macOS has no `flock`). Second concurrent instance must fail immediately with busy exit (e.g. 75, `already locked`), never queue.
+- Controller allows at most **one** `launchctl kickstart -k <resolved-domain>/com.hong.catdesk`, no retry loop, no auto-rollback. Any gate failure exits non-zero, preserves the private backup, and leaves the decision to the external ChatGPT.
+- Controller gates are process-level only: target path is physical file (not symlink), `codesign Identifier=com.hong.catdesk` and `DR` valid (`identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`), dynamically resolved launchd domain (`gui/<uid>` or `user/<uid>`, never hard-coded), launcher/plist existence, and `nc`/`TCP` tool availability for `nc -z 127.0.0.1 3200`. It must not `curl` `/health`/`/mcp`, must not read/output any slug.
+- After `--activate`, replacement verification is precise: resolve wrapper PID via `launchctl print <domain>/com.hong.catdesk`, then `ps -axo pid=,ppid=,command=` to find child where PPID==wrapper PID and first exe token precisely equals `$STABLE_RUNTIME`; plus post-restart triple 30s stability (wrapper PID + `runs` + stable child PID unchanged, PPID/exe still stable) and `nc -z 127.0.0.1 3200` success. Idempotency: if launcher already precisely stable and child already precisely stable, skip kickstart and directly do `ALREADY_ACTIVE` triple stability + TCP.
+- Post-activation **acceptance** (MCP discover, command execution, Cloudflare continuity, read/write roots/boundaries, ledger) is performed by ChatGPT after reconnecting with `catdesk_instruction` (new bootstrap); failure is judged externally, and rollback is an explicit external decision that re-signs/copies the previous accepted versioned artifact to the same `runtime/bin/catdesk` path.
+- Never record any secret slug, token, or tunnel credential in the repository, skill, script output, or logs.
+
+Canonical controller artifact: `scripts/activate-stable-runtime.sh` (`--preflight` by default, `--activate` explicit). The ephemeral bootstrap procedure for remote execution is documented here and in `skills/catdesk-release-update/SKILL.md`; no daemon/service is created.
+
+Ephemeral bootstrap for remote activation (when the controller must outlive CatDesk):
+
+```bash
+# 1. Harmless probe already proves run=1 semantics for this pattern — do not use launchctl submit.
+# 2. Create restricted staging: umask 077; mkdir -p ~/.catdesk/activation (0700)
+# 3. Write plist to ~/.catdesk/activation/com.hong.catdesk.activate.<timestamp>.plist (0600):
+#    Label=com.hong.catdesk.activate.<timestamp>, ProgramArguments=[/path/to/scripts/activate-stable-runtime.sh --activate],
+#    RunAtLoad=true, KeepAlive=false, no StartInterval/WatchPaths/StartCalendarInterval
+# 4. Resolve domain dynamically: gui/<uid> if launchctl print gui/<uid>/com.hong.catdesk succeeds else user/<uid>
+# 5. launchctl bootstrap <domain> <plist>  (unique label, runs exactly once)
+# 6. After reconnect, ChatGPT verifies replacement + 30s stability + nc -z 127.0.0.1 3200, then MCP/Cloudflare acceptance.
+# 7. Cleanup: launchctl bootout <domain>/<label> (or bootout <domain> <plist>); controller never self-bootouts or restarts.
+```
 
 ## Acceptance checklist
 
