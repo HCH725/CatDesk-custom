@@ -96,7 +96,8 @@ Production CatDesk must expose its existing MCP token accounting as a minimal lo
 Required semantics:
 
 - Keep `config.toml` usage totals as the existing cumulative state; the ledger supplements rather than replaces them.
-- Append one JSONL row for each recorded MCP tool call using the stable fields `eventId`, `timestampMs`, `inputTokens`, `outputTokens`, and `bucket`.
+- Append one JSONL row for each recorded MCP tool call using the stable fields `eventId`, `timestampMs`, `inputTokens`, `outputTokens`, `bucket`, and `pricingModel`.
+- `pricingModel` records the ChatGPT model identity used for downstream cost estimation while CatDesk remains displayed as its own `catdesk-mcp` usage source. Update the versioned `CURRENT_USAGE_PRICING_MODEL` when the ChatGPT runtime moves to a new model; never infer the model from the accounting `bucket`.
 - `eventId` must be unique per recorded event and remain the stable downstream deduplication identity even if ledger rows are moved or reordered.
 - Do not duplicate derived totals such as `totalTokens` in each row.
 - Production assumes the CatDesk daemon is the sole ledger writer. If a crash leaves a truncated final row, the next append must isolate that fragment with a newline before writing the next complete event.
