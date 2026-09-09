@@ -2125,6 +2125,7 @@ toolCallCount = 0
             "search",
             "write",
             "edit",
+            "create_handoff",
             "delete",
         ]
         .map(bootstrap_widget)
@@ -2142,7 +2143,7 @@ toolCallCount = 0
         assert!(flow.bootstrap_status_active);
         assert!(flow.bootstrap_progress.is_complete());
         assert_eq!(flow.bootstrap_progress.expected_widgets, widgets);
-        assert_eq!(flow.bootstrap_progress.loaded_widget_tool_names.len(), 10);
+        assert_eq!(flow.bootstrap_progress.loaded_widget_tool_names.len(), 11);
 
         let _ = std::fs::remove_file(config_path);
         let _ = std::fs::remove_dir_all(workspace);
