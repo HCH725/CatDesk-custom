@@ -64,7 +64,7 @@ Two different contents signed with this identity prove DR stability despite diff
 - **B (0.5.0-custom.3 content) signed:** `SHA256=7e840ab9fc32f38adfa4fb187f92833c24c68fba4881410530053007d83023ac`, `CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`, `Identifier=com.hong.catdesk`, `Authority=CatDesk Local Code Signing`
 - **Both:** `Designated Requirement = identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"` and `codesign --verify --strict --verbose=4` = `valid on disk` + `satisfies its Designated Requirement`.
 
-Staging from current accepted `0.5.0-custom.3` to `runtime-next/bin/catdesk` must show the same DR (`CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea` for that content).
+Every future staging copy from the current accepted versioned artifact to `runtime-next/bin/catdesk` must preserve the same stable DR and `Identifier=com.hong.catdesk`; the content-specific CDHash/SHA256 is expected to change with each accepted release and must be recorded per deployment.
 
 ### Verification gate (`CSSMERR_TP_NOT_TRUSTED` is NOT a blocker)
 
@@ -90,7 +90,7 @@ The first migration from the old ad-hoc/versioned-path (`~/.local/share/catdesk/
 
 ### Post-activation acceptance contract (PRODUCTION_ACCEPTED)
 
-Phase B `PRODUCTION_ACCEPTED` was granted only after (without hard-coding PIDs): ephemeral `launchctl bootstrap` one-shot `runs=1`/`exit 0`; precise child replacement (`PPID==wrapper` + `exe==stable runtime`), 30s triple stability (wrapper PID + `runs` + stable child PID unchanged) + `nc -z 127.0.0.1 3200`; and reconnected ChatGPT acceptance — MCP `catdesk_instruction` discover + `catdesk_command`/`search`/`write`/`delete`, ExpansionDrive read/write, **write-root denial** and **outside-read-root denial**, and **Cloudflare continuity** all PASS. Launcher sole target is the stable runtime; same local certificate/DR; Cloudflare unchanged; roots contract unchanged. Future upgrades MUST follow GitHub-first → accepted tag → versioned artifact → stable sign/copy → stable runtime → production acceptance, never direct `git pull` on production.
+Phase B `PRODUCTION_ACCEPTED` is granted only after (without hard-coding PIDs): ephemeral `launchctl bootstrap` one-shot `runs=1`/`exit 0`; precise child replacement (`PPID==wrapper` + `exe==stable runtime`), 30s triple stability (wrapper PID + `runs` + stable child PID unchanged) + `nc -z 127.0.0.1 3200`; and reconnected ChatGPT acceptance — MCP `catdesk_instruction` discover + `run_command`/`search`/`write`/`delete`, workspace and ExpansionDrive write/search/delete, **write-root denial** and **outside-read-root denial**, usage-ledger continuity, and **Cloudflare continuity** all PASS. Launcher sole target is the stable runtime; same local certificate/DR; Cloudflare unchanged; roots contract unchanged. Future upgrades MUST follow GitHub-first → accepted tag → versioned artifact → stable sign/copy → stable runtime → production acceptance, never direct `git pull` on production.
 
 ### Troubleshooting note — dedicated `read` tool schema mismatch
 

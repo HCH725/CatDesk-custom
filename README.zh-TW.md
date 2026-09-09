@@ -15,8 +15,11 @@
 - **目前 upstream baseline：** `v0.7.0`
 - **目前 upstream commit：** `cc5daf850cfa5bcd6cae8e414b9009eeeba0a6d8`
 - **Downstream 版本命名：** `vX.Y.Z-custom.N`
-- **已接受 downstream release：** `v0.5.0-custom.3`（不變，目前 production provenance）
-- **Candidate：** `upgrade/v0.7.0` onto `v0.7.0`（待審，未接受，不做 production rollout）
+- **已接受 downstream release：** `v0.7.0-custom.1`（**PRODUCTION_ACCEPTED**，source-level provenance commit `16fc4e3b8a5f5638408c93d5d4e28b49f4829faf`）
+- **官方 upstream macOS arm64 artifact SHA256：** `81f6ce46f7e8170c4240c7b5d777f5efc3ec6f5f803620164cc25af22d5012cd`
+- **Downstream versioned arm64 artifact SHA256：** `33593e1c33818dacabc6fee8a90923cec5e4376d974807d9c416a7a677ab006d`
+- **目前 production runtime：** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（stable-signed SHA256 `ab7a76b5d36a703b94ca24413178dfa316e15b980865f398f0d0c46b6d8eb309`）
+- **前一個 accepted rollback release：** `v0.5.0-custom.3`（保留作 rollback source）
 - **Production source of truth：** 通過驗收與 audit 後的這個 private repository
 
 未來更新時，**不能用乾淨 upstream checkout 直接取代本 repo**。新版必須保留下方記載的 downstream contract，同時保留新 upstream release 的功能。
@@ -124,14 +127,14 @@ Downstream port 不能為了保留舊 custom 而把新版 upstream 功能洗掉�
 - Traditional Chinese mode selection 與持久化的 UI language preference；
 - opt-in macOS Terminal.app profile flow 與持久化偏好；
 - macOS 在標準 `/Applications` 與 `~/Applications` App bundle 中的 Chromium-family detection；
-- upstream `v0.7.0` session handoff（`create_handoff`）含 workspace-local storage 與 ChatGPT Library recovery（原生實作，`src/handoff.rs` 無 downstream 客製）；
+- upstream `v0.7.0` session handoff（`create_handoff`）含 workspace-specific identity 與 ChatGPT Library recovery（原生實作，`src/handoff.rs` 無 downstream 客製）；
 - upstream Linux sandbox SSH authentication 行為。
 
 每次新 upstream release 都必須重新閱讀 release notes，動態產生 release-specific smoke checks。
 
 ## 目前 custom source scope
 
-`v0.7.0` candidate downstream 目前只修改 upstream 的四個 source files：
+已接受的 `v0.7.0-custom.1` downstream 只修改 upstream 的四個 source files：
 
 ```text
 src/change_tracking/mod.rs
@@ -140,7 +143,7 @@ src/state.rs
 src/workspace_tools.rs
 ```
 
-這三個檔名不是永久規則。未來 upstream 架構可能改變，屆時可能需要更少、不同，甚至零個修改。要保存的是 **behavioral contract**，不是舊版檔案配置。
+這四個檔名不是永久規則。未來 upstream 架構可能改變，屆時可能需要更少、不同，甚至零個修改。要保存的是 **behavioral contract**，不是舊版檔案配置。
 
 ## 穩定 macOS runtime 身份與部署契約（Phase B — PRODUCTION_ACCEPTED）
 
@@ -229,7 +232,7 @@ Phase B 的 `PRODUCTION_ACCEPTED` 僅在以下全部通過後授予（記錄為�
 
 - **Ephemeral activation job：** `launchctl bootstrap` one-shot 僅執行 **一次**（`runs=1`、`exit 0`），結束後由重連的 ChatGPT 執行 `launchctl bootout` 清理。
 - **Process-level activation：** 精確 child 取代（`PPID==wrapper` + `exe==/Users/hong/.local/share/catdesk/runtime/bin/catdesk`）、**30 秒 triple stability**（wrapper PID + `runs` + stable child PID 皆不變，`PPID`/`exe` 仍穩定）與 `nc -z 127.0.0.1 3200` TCP 成功。
-- **Post-activation acceptance（重連後 ChatGPT）：** MCP `catdesk_instruction` discover + `catdesk_command`／`search`／`write`／`delete`、ExpansionDrive 讀寫、**write-root denial** 與 **outside-read-root denial**（path-boundary 驗證）以及 **Cloudflare continuity** 全部 PASS，才算 `PRODUCTION_ACCEPTED`。
+- **Post-activation acceptance（重連後 ChatGPT）：** MCP `catdesk_instruction` discover + `run_command`／`search`／`write`／`delete`、workspace 與 ExpansionDrive write/search/delete、**write-root denial** 與 **outside-read-root denial**（path-boundary 驗證）、append-only usage ledger continuity，以及 **Cloudflare continuity** 全部 PASS，才算 `PRODUCTION_ACCEPTED`。
 
 Launcher 唯一目標為穩定 runtime；穩定 `codesign Identifier=com.hong.catdesk` 且同一 local certificate／DR；Cloudflare tunnel 不變；read／write roots 契約不變。
 
@@ -364,7 +367,7 @@ upstream -> official public repository (Xeift/CatDesk)
 
 ## Build 與 test
 
-使用 upstream Rust toolchain 與 project instructions。不要把任何 upstream 純格式 drift 帶入 downstream。對四個 downstream custom Rust files 做 scoped rustfmt/check；本 candidate 實測（`cargo test`：228 passed、0 failed；`cargo test --release`：228 passed、0 failed）：
+使用 upstream Rust toolchain 與 project instructions。不要把任何 upstream 純格式 drift 帶入 downstream。對四個 downstream custom Rust files 做 scoped rustfmt/check；已接受的 `v0.7.0-custom.1` 實測（`cargo test`：228 passed、0 failed；`cargo test --release`：228 passed、0 failed）：
 
 ```bash
 rustfmt --edition 2024 --check src/change_tracking/mod.rs src/mcp.rs src/state.rs src/workspace_tools.rs
@@ -374,7 +377,7 @@ cargo test --release
 cargo build --release
 ```
 
-本 candidate 的 `src/handoff.rs` 與 upstream `v0.7.0` 完全一致（原生 `create_handoff`/Library recovery，無 downstream 客製）。Release-specific 與 downstream boundary tests 是額外要求，不能取代 upstream test suite。
+已接受的 `v0.7.0-custom.1` 之 `src/handoff.rs` 與 upstream `v0.7.0` 完全一致（原生 `create_handoff`/Library recovery，無 downstream 客製）。Release-specific 與 downstream boundary tests 是額外要求，不能取代 upstream test suite。
 
 ## License 與 upstream attribution
 

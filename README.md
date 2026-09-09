@@ -15,8 +15,11 @@
 - **Current upstream baseline:** `v0.7.0`
 - **Current upstream commit:** `cc5daf850cfa5bcd6cae8e414b9009eeeba0a6d8`
 - **Downstream release naming:** `vX.Y.Z-custom.N`
-- **Accepted downstream release:** `v0.5.0-custom.3` (unchanged — current production provenance)
-- **Candidate:** `upgrade/v0.7.0` onto `v0.7.0` (pending audit — not accepted, no production rollout)
+- **Accepted downstream release:** `v0.7.0-custom.1` (**PRODUCTION_ACCEPTED**, source-level provenance commit `16fc4e3b8a5f5638408c93d5d4e28b49f4829faf`)
+- **Official upstream macOS arm64 artifact SHA256:** `81f6ce46f7e8170c4240c7b5d777f5efc3ec6f5f803620164cc25af22d5012cd`
+- **Downstream versioned arm64 artifact SHA256:** `33593e1c33818dacabc6fee8a90923cec5e4376d974807d9c416a7a677ab006d`
+- **Current production runtime:** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (stable-signed SHA256 `ab7a76b5d36a703b94ca24413178dfa316e15b980865f398f0d0c46b6d8eb309`)
+- **Previous accepted rollback release:** `v0.5.0-custom.3` (retained as rollback source)
 - **Production source of truth:** this private repository after a downstream release has passed acceptance and audit
 
 Do **not** replace this repository with a fresh upstream checkout. Future updates must preserve the downstream contract documented below while retaining all relevant upstream release behavior.
@@ -124,14 +127,14 @@ For the current `v0.7.0` baseline, acceptance includes preserving:
 - Traditional Chinese mode selection and persisted UI language preference;
 - opt-in macOS Terminal.app profile flow and its persisted preference;
 - macOS Chromium-family detection in standard `/Applications` and `~/Applications` bundles;
-- upstream `v0.7.0` session handoff (`create_handoff`) with workspace-local storage and ChatGPT Library recovery (native implementation; `src/handoff.rs` carries no downstream customization);
+- upstream `v0.7.0` session handoff (`create_handoff`) with workspace-specific identity and ChatGPT Library recovery (native implementation; `src/handoff.rs` carries no downstream customization);
 - upstream Linux sandbox SSH authentication behavior.
 
 Release-specific checks must be re-derived from the release notes every time upstream changes.
 
 ## Current custom source scope
 
-The `v0.7.0` candidate downstream implementation currently modifies only these upstream source files:
+The accepted `v0.7.0-custom.1` downstream implementation modifies only these upstream source files:
 
 ```text
 src/change_tracking/mod.rs
@@ -229,7 +232,7 @@ Phase B `PRODUCTION_ACCEPTED` was granted only after all of the following passed
 
 - **Ephemeral activation job:** `launchctl bootstrap` one-shot ran **exactly once** (`runs=1`, `exit 0`), then `launchctl bootout` cleanup by the reconnected ChatGPT.
 - **Process-level activation:** precise child replacement (`PPID==wrapper` + `exe==/Users/hong/.local/share/catdesk/runtime/bin/catdesk`), **30s triple stability** (wrapper PID + `runs` + stable child PID unchanged, `PPID`/`exe` still stable), and `nc -z 127.0.0.1 3200` TCP success.
-- **Post-activation acceptance by reconnected ChatGPT:** MCP `catdesk_instruction` discover + `catdesk_command`/`search`/`write`/`delete`, ExpansionDrive read/write, **write-root denial** and **outside-read-root denial** (path-boundary enforcement), and **Cloudflare continuity** all PASS. Only then `PRODUCTION_ACCEPTED`.
+- **Post-activation acceptance by reconnected ChatGPT:** MCP `catdesk_instruction` discover + `run_command`/`search`/`write`/`delete`, workspace and ExpansionDrive write/search/delete, **write-root denial** and **outside-read-root denial** (path-boundary enforcement), append-only usage ledger continuity, and **Cloudflare continuity** all PASS. Only then `PRODUCTION_ACCEPTED`.
 
 Launcher sole target is the stable runtime; stable `codesign Identifier=com.hong.catdesk` on the same local certificate/DR; Cloudflare tunnel unchanged; read/write roots contract unchanged.
 
@@ -366,7 +369,7 @@ Never force-push `main` merely to align it with upstream. Upstream changes are i
 
 ## Build and test
 
-Use the upstream Rust toolchain and project instructions. Do not carry any upstream formatting-only drift downstream. Verify the four downstream custom Rust files with scoped rustfmt/check commands; this candidate measures (`cargo test`: 228 passed, 0 failed; `cargo test --release`: 228 passed, 0 failed):
+Use the upstream Rust toolchain and project instructions. Do not carry any upstream formatting-only drift downstream. Verify the four downstream custom Rust files with scoped rustfmt/check commands; accepted `v0.7.0-custom.1` measured (`cargo test`: 228 passed, 0 failed; `cargo test --release`: 228 passed, 0 failed):
 
 ```bash
 rustfmt --edition 2024 --check src/change_tracking/mod.rs src/mcp.rs src/state.rs src/workspace_tools.rs
@@ -376,7 +379,7 @@ cargo test --release
 cargo build --release
 ```
 
-This candidate keeps `src/handoff.rs` identical to upstream `v0.7.0` (native `create_handoff`/Library recovery, no downstream customization). Release-specific and downstream boundary tests are additional requirements, not substitutes for the upstream suite.
+Accepted `v0.7.0-custom.1` keeps `src/handoff.rs` identical to upstream `v0.7.0` (native `create_handoff`/Library recovery, no downstream customization). Release-specific and downstream boundary tests are additional requirements, not substitutes for the upstream suite.
 
 ## License and upstream attribution
 
