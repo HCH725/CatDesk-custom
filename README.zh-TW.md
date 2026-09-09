@@ -200,7 +200,7 @@ Bootstrap 是在該 Mac 上 **一次性本機操作** 建立 Keychain certificat
 - **B（0.5.0-custom.3 內容）簽署後：** `SHA256=7e840ab9fc32f38adfa4fb187f92833c24c68fba4881410530053007d83023ac`、`CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`、`Identifier=com.hong.catdesk`、`Authority=CatDesk Local Code Signing`
 - **兩者皆：** `Designated Requirement = identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"` 且 `codesign --verify --strict --verbose=4` = `valid on disk` + `satisfies its Designated Requirement`。
 
-這證明穩定 certificate + 穩定 identifier 能在 binary 內容變動下維持 **穩定 DR**，即 TCC-persistence 的必要條件。由目前 accepted `0.5.0-custom.3` 複製並簽署至 `runtime-next/bin/catdesk` 的實體 staging 亦必須呈現相同 DR（目前 staging `CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`、`Identifier=com.hong.catdesk`、DR 同上）。
+這證明穩定 certificate + 穩定 identifier 能在 binary 內容變動下維持 **穩定 DR**，即 TCC-persistence 的必要條件。每個 accepted release 複製並簽署至 `runtime-next/bin/catdesk` 時，都必須維持相同 DR 與 `Identifier=com.hong.catdesk`；CDHash／SHA256 屬內容特定值，版本改變時本來就會不同，必須逐 release 留存。
 
 ### 驗證門檻（不得只看 `find-identity` 文字）
 

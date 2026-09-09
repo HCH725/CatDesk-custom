@@ -200,7 +200,7 @@ Two different binaries signed with this identity were independently verified to 
 - **B (0.5.0-custom.3 content) signed:** `SHA256=7e840ab9fc32f38adfa4fb187f92833c24c68fba4881410530053007d83023ac`, `CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`, `Identifier=com.hong.catdesk`, `Authority=CatDesk Local Code Signing`
 - **Both:** `Designated Requirement = identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"` and `codesign --verify --strict --verbose=4` = `valid on disk` + `satisfies its Designated Requirement`.
 
-This proves that a stable certificate + stable identifier yields a **stable DR** that survives binary content changes, which is the TCC-persistence requirement. A physical staging copy from the current accepted `0.5.0-custom.3` signed to `runtime-next/bin/catdesk` must exhibit the same DR (current staging `CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`, `Identifier=com.hong.catdesk`, `DR` as above).
+This proves that a stable certificate + stable identifier yields a **stable DR** that survives binary content changes, which is the TCC-persistence requirement. Every accepted release staged to `runtime-next/bin/catdesk` must exhibit the same DR and `Identifier=com.hong.catdesk`; content-specific CDHash/SHA256 values are expected to change and must be recorded per release.
 
 ### Verification gate (do not rely on `find-identity` text)
 
