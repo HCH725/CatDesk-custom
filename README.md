@@ -12,9 +12,11 @@
 
 - **Upstream project:** https://github.com/Xeift/CatDesk
 - **Upstream source of truth:** official stable tags from `Xeift/CatDesk`
-- **Current upstream baseline:** `v0.5.0`
-- **Current upstream commit:** `0e958123c25284cd9ead1ba171ed1c3c8f58d7c5`
+- **Current upstream baseline:** `v0.7.0`
+- **Current upstream commit:** `cc5daf850cfa5bcd6cae8e414b9009eeeba0a6d8`
 - **Downstream release naming:** `vX.Y.Z-custom.N`
+- **Accepted downstream release:** `v0.5.0-custom.3` (unchanged — current production provenance)
+- **Candidate:** `upgrade/v0.7.0` onto `v0.7.0` (pending audit — not accepted, no production rollout)
 - **Production source of truth:** this private repository after a downstream release has passed acceptance and audit
 
 Do **not** replace this repository with a fresh upstream checkout. Future updates must preserve the downstream contract documented below while retaining all relevant upstream release behavior.
@@ -110,7 +112,7 @@ Required semantics:
 
 Downstream changes must never erase features introduced by newer upstream releases.
 
-For the current `v0.5.0` baseline, acceptance includes preserving:
+For the current `v0.7.0` baseline, acceptance includes preserving:
 
 - `read` support for a `paths` array;
 - the documented maximum of 32 paths per batch;
@@ -121,13 +123,15 @@ For the current `v0.5.0` baseline, acceptance includes preserving:
 - connector bootstrap/widget completion behavior introduced before `v0.5.0`;
 - Traditional Chinese mode selection and persisted UI language preference;
 - opt-in macOS Terminal.app profile flow and its persisted preference;
-- macOS Chromium-family detection in standard `/Applications` and `~/Applications` bundles.
+- macOS Chromium-family detection in standard `/Applications` and `~/Applications` bundles;
+- upstream `v0.7.0` session handoff (`create_handoff`) with workspace-local storage and ChatGPT Library recovery (native implementation; `src/handoff.rs` carries no downstream customization);
+- upstream Linux sandbox SSH authentication behavior.
 
 Release-specific checks must be re-derived from the release notes every time upstream changes.
 
 ## Current custom source scope
 
-The `v0.5.0` downstream implementation currently modifies only these upstream source files:
+The `v0.7.0` candidate downstream implementation currently modifies only these upstream source files:
 
 ```text
 src/change_tracking/mod.rs
@@ -362,15 +366,17 @@ Never force-push `main` merely to align it with upstream. Upstream changes are i
 
 ## Build and test
 
-Use the upstream Rust toolchain and project instructions. Clean upstream `v0.5.0` has a pre-existing rustfmt drift in `src/browser.rs`, so do not carry that formatting-only change downstream. Verify the three downstream custom Rust files with scoped rustfmt/check commands, and retain the upstream test result (`cargo test`: 215 passed, 0 failed):
+Use the upstream Rust toolchain and project instructions. Do not carry any upstream formatting-only drift downstream. Verify the four downstream custom Rust files with scoped rustfmt/check commands; this candidate measures (`cargo test`: 228 passed, 0 failed; `cargo test --release`: 228 passed, 0 failed):
 
 ```bash
-rustfmt --edition 2024 --check src/change_tracking/mod.rs src/mcp.rs src/workspace_tools.rs
+rustfmt --edition 2024 --check src/change_tracking/mod.rs src/mcp.rs src/state.rs src/workspace_tools.rs
 cargo check
 cargo test
+cargo test --release
+cargo build --release
 ```
 
-The clean upstream `v0.5.0` full-tree `cargo fmt --check` is expected to fail only on that pre-existing `src/browser.rs` formatting drift; it is not part of the downstream custom scope. Release-specific and downstream boundary tests are additional requirements, not substitutes for the upstream suite.
+This candidate keeps `src/handoff.rs` identical to upstream `v0.7.0` (native `create_handoff`/Library recovery, no downstream customization). Release-specific and downstream boundary tests are additional requirements, not substitutes for the upstream suite.
 
 ## License and upstream attribution
 
