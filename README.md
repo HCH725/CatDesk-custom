@@ -12,24 +12,25 @@
 
 - **Upstream project:** https://github.com/Xeift/CatDesk
 - **Upstream source of truth:** official stable tags from `Xeift/CatDesk`
-- **Accepted production baseline (currently deployed):** `v0.7.0`
-- **Accepted upstream commit:** `cc5daf850cfa5bcd6cae8e414b9009eeeba0a6d8`
+- **Accepted production baseline (currently deployed):** `v0.9.0`
+- **Accepted upstream commit:** `37197b9f9530baa6634e32365be99ca78d9373cc`
 - **Downstream release naming:** `vX.Y.Z-custom.N`
-- **Accepted downstream release:** `v0.7.0-custom.1` (**PRODUCTION_ACCEPTED**, source-level provenance commit `16fc4e3b8a5f5638408c93d5d4e28b49f4829faf`)
-- **Official upstream macOS arm64 artifact SHA256 (v0.7.0):** `81f6ce46f7e8170c4240c7b5d777f5efc3ec6f5f803620164cc25af22d5012cd`
-- **Downstream versioned arm64 artifact SHA256 (v0.7.0-custom.1):** `33593e1c33818dacabc6fee8a90923cec5e4376d974807d9c416a7a677ab006d`
-- **Current production runtime:** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (stable-signed SHA256 `ab7a76b5d36a703b94ca24413178dfa316e15b980865f398f0d0c46b6d8eb309`)
-- **Previous accepted rollback release:** `v0.5.0-custom.3` (retained as rollback source)
+- **Accepted downstream release:** `v0.9.0-custom.1` (**PRODUCTION_ACCEPTED**, source-level provenance commit `495893ed95f39d997177f516eb69dae632966324`)
+- **Official upstream macOS arm64 artifact SHA256 (v0.9.0):** `4d95fca3945978b78afd45ca13bf7c6aad0dddf334c5338b54e530b7fbcacf06`
+- **Downstream versioned arm64 artifact SHA256 (v0.9.0-custom.1):** `00e274be65a10466a80ba0cecd4b32c95ae95f0fc0a296e50b63a3529a5a601d`
+- **Current production runtime:** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (stable-signed SHA256 `1b1ea9c4173cb16ddc3019ea5a0451829819971f731487ce281437faee8eb798`)
+- **Previous accepted rollback release:** `v0.7.0-custom.1` (retained as rollback source; versioned artifact SHA256 `33593e1c33818dacabc6fee8a90923cec5e4376d974807d9c416a7a677ab006d`)
 - **Production source of truth:** this private repository after a downstream release has passed acceptance and audit
 
-### Candidate — `v0.9.0-custom.1` (pending production acceptance; not accepted, no rollout)
+### Accepted release record — `v0.9.0-custom.1` (2026-09-17)
 
-- **Candidate upstream baseline:** `v0.9.0` — tag object `2f6037e479bd7467d6f60dc56e0e114186a03be8`, commit `37197b9f9530baa6634e32365be99ca78d9373cc` (`== upstream/main` at port time)
-- **Official upstream macOS arm64 artifact SHA256 (v0.9.0):** `4d95fca3945978b78afd45ca13bf7c6aad0dddf334c5338b54e530b7fbcacf06`
-- **Candidate branch:** `upgrade/v0.9.0` — promotion requires an independent pre-activation audit of the exact frozen revision plus post-activation ChatGPT acceptance.
-- **Candidate custom source scope:** `src/mcp.rs`, `src/state.rs`, `src/workspace_tools.rs` (3 upstream source files). `src/change_tracking/mod.rs` is **upstream-identical**: upstream `v0.8.0` `normalize_scope_paths` plus the downstream canonicalizing resolvers absorb the previous 7-line target-canonicalize custom, and the downstream boundary test `external_root_targets_keep_accurate_before_after_tracking` locks contract §3.
-- **Candidate verification (measured):** scoped `rustfmt --edition 2024 --check` pass; `cargo check --all-targets` pass; `cargo test` 239 passed / 0 failed; `cargo test --release` 239 passed / 0 failed (audited `d7261fa` snapshot: 238 passed / 0 failed); `scripts/tests/activate-controller-regression.sh` PASS (T1–T4).
-- **Candidate rollback source:** previous accepted artifact `~/.local/share/catdesk/0.7.0-custom.1/bin/catdesk` re-signed as `com.hong.catdesk` and atomically replaced into the same `runtime/bin/catdesk` path.
+- **Baseline:** upstream `v0.9.0` (tag object `2f6037e479bd7467d6f60dc56e0e114186a03be8`, commit `37197b9f9530baa6634e32365be99ca78d9373cc`); frozen candidate `d1ce2948e8230f0ec7f843cdfb1522e3e44d59a1`, merged as `495893e`.
+- **Independent audits:** pre-activation audit FAIL (card `t_dc033b89`) → remediation commit `d1ce294` → re-audit **PASS** (`t_03492b4d`: F1–F7 all pass, 239 debug/release tests, activation harness T1–T4, credential scan all zero, production untouched during audit).
+- **Activation (2026-09-17 06:25:55):** content-identity upgrade path (no `ALREADY_ACTIVE` false positive), atomic rename promotion, exactly one `kickstart -k`, replacement child PID change (`1002` → `51977`), 30s triple stability, `nc -z 127.0.0.1 3200` PASS; launcher/plist hashes unchanged; Cloudflare untouched; backup `~/.catdesk/activation/backups/20260917-062555-51896`.
+- **Post-activation acceptance (reconnected ChatGPT):** PASS — MCP discover/command/search/write/delete, workspace and ExpansionDrive CRUD, write-root and outside-read-root denials, usage ledger continuity (16374 → 16512 rows, stable `eventId`/`timestampMs` schema), Cloudflare continuity.
+- **Custom source scope:** `src/mcp.rs`, `src/state.rs`, `src/workspace_tools.rs`. `src/change_tracking/mod.rs`, `src/handoff.rs` and `src/linux_sandbox.rs` are upstream-identical in this release. `src/change_tracking/mod.rs` became upstream-identical because upstream `v0.8.0` `normalize_scope_paths` plus the downstream canonicalizing resolvers absorb the previous 7-line target-canonicalize custom; contract §3 is locked by the downstream boundary test `external_root_targets_keep_accurate_before_after_tracking`.
+- **Verification (measured):** scoped `rustfmt --edition 2024 --check` pass; `cargo check --all-targets` pass; `cargo test` 239 passed / 0 failed; `cargo test --release` 239 passed / 0 failed; `scripts/tests/activate-controller-regression.sh` PASS (T1–T4).
+- **Rollback source:** previous accepted artifact `~/.local/share/catdesk/0.7.0-custom.1/bin/catdesk`, re-signed as `com.hong.catdesk` and atomically replaced into the same `runtime/bin/catdesk` path.
 
 Do **not** replace this repository with a fresh upstream checkout. Future updates must preserve the downstream contract documented below while retaining all relevant upstream release behavior.
 
@@ -125,7 +126,7 @@ Required semantics:
 
 Downstream changes must never erase features introduced by newer upstream releases.
 
-For the current `v0.7.0` baseline, acceptance includes preserving:
+For the historical `v0.7.0` baseline, acceptance included preserving (all items remain required):
 
 - `read` support for a `paths` array;
 - the documented maximum of 32 paths per batch;
@@ -140,7 +141,7 @@ For the current `v0.7.0` baseline, acceptance includes preserving:
 - upstream `v0.7.0` session handoff (`create_handoff`) with workspace-specific identity and ChatGPT Library recovery (native implementation; `src/handoff.rs` carries no downstream customization);
 - upstream Linux sandbox SSH authentication behavior.
 
-For the `v0.9.0-custom.1` candidate baseline, acceptance additionally includes preserving:
+For the current `v0.9.0-custom.1` baseline, acceptance additionally includes preserving:
 
 - the `widgetCornerStyle` setting end to end (config, widget payload, resource query parameter) at widget resource revision 6;
 - the expanded Traditional Chinese coverage (dashboard, settings, browser selection, ngrok setup, themes, tool modes, runtime logs) while the launcher-critical English strings stay intact (`Select mode`, `Control Computer`, `Control Browser`, `Both`, `RUNNING`, `port 3200`, `Installed browsers`, `Select Browser`);
@@ -162,7 +163,7 @@ src/state.rs
 src/workspace_tools.rs
 ```
 
-The `v0.9.0-custom.1` candidate needs only three of them:
+The accepted `v0.9.0-custom.1` release needs only three of them:
 
 ```text
 src/mcp.rs
@@ -170,7 +171,7 @@ src/state.rs
 src/workspace_tools.rs
 ```
 
-`src/change_tracking/mod.rs` is **upstream-identical** in the candidate: upstream `v0.8.0` absorbed the previous 7-line target-canonicalize custom with `normalize_scope_paths`, and the downstream canonicalizing resolvers keep every target canonical before it reaches `ChangeSession`. Contract §3 is locked by the downstream boundary test `external_root_targets_keep_accurate_before_after_tracking` instead of by a source delta.
+`src/change_tracking/mod.rs` is **upstream-identical** in this release: upstream `v0.8.0` absorbed the previous 7-line target-canonicalize custom with `normalize_scope_paths`, and the downstream canonicalizing resolvers keep every target canonical before it reaches `ChangeSession`. Contract §3 is locked by the downstream boundary test `external_root_targets_keep_accurate_before_after_tracking` instead of by a source delta.
 
 This scope is descriptive, not permanent. A future upstream architecture may require fewer, different, or no downstream changes. Preserve the **behavioral contract**, not old file layouts.
 
@@ -398,7 +399,7 @@ Never force-push `main` merely to align it with upstream. Upstream changes are i
 
 ## Build and test
 
-Use the upstream Rust toolchain and project instructions. Do not carry any upstream formatting-only drift downstream. Verify the downstream custom Rust files with scoped rustfmt/check commands; accepted `v0.7.0-custom.1` measured (`cargo test`: 228 passed, 0 failed; `cargo test --release`: 228 passed, 0 failed), and the `v0.9.0-custom.1` candidate measured **239 passed / 0 failed** in both profiles (`change_tracking` is upstream-identical in the candidate and is still checked for drift):
+Use the upstream Rust toolchain and project instructions. Do not carry any upstream formatting-only drift downstream. Verify the downstream custom Rust files with scoped rustfmt/check commands; accepted `v0.7.0-custom.1` measured (`cargo test`: 228 passed, 0 failed; `cargo test --release`: 228 passed, 0 failed), and the accepted `v0.9.0-custom.1` measured **239 passed / 0 failed** in both profiles (`change_tracking` is upstream-identical in this release and is still checked for drift):
 
 ```bash
 rustfmt --edition 2024 --check src/change_tracking/mod.rs src/mcp.rs src/state.rs src/workspace_tools.rs
@@ -411,7 +412,7 @@ sh scripts/tests/activate-controller-regression.sh
 
 The activation-controller regression harness (`scripts/tests/activate-controller-regression.sh`) locks the audit-fixed controller behaviour: `--preflight` creates no activation state, changed bytes at the same stable path promote atomically with exactly one kickstart, identical bytes stay a no-op, and a missing staged artifact falls back with an explicit notice.
 
-Accepted `v0.7.0-custom.1` keeps `src/handoff.rs` identical to upstream `v0.7.0`, and the `v0.9.0-custom.1` candidate keeps it identical to upstream `v0.9.0` (native `create_handoff`/Library recovery, no downstream customization). Release-specific and downstream boundary tests are additional requirements, not substitutes for the upstream suite.
+Accepted `v0.7.0-custom.1` keeps `src/handoff.rs` identical to upstream `v0.7.0`, and the accepted `v0.9.0-custom.1` keeps it identical to upstream `v0.9.0` (native `create_handoff`/Library recovery, no downstream customization). Release-specific and downstream boundary tests are additional requirements, not substitutes for the upstream suite.
 
 ## License and upstream attribution
 
