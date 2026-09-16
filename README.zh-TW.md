@@ -1,356 +1,385 @@
-# CatDesk
+# CatDesk Custom
 
-[English](README.md) | **繁體中文**
+[English](README.md) | [繁體中文](README.zh-TW.md)
 
-一個開源工具，讓你可以把 ChatGPT Chat 當成本機程式開發代理使用。不需要逆向工程、不需要 API、不需要 Codex，也不需要 Work 模式。只要有 ChatGPT Plus 訂閱即可。
+> **這是漢秦哥目前 production CatDesk 的 Private downstream repository。**
+>
+> 這個 repository **不是**單純複製官方 CatDesk，而是正式保存：
+>
+> **Xeift/CatDesk 官方穩定版 + 本機最小必要客製化 = production CatDesk**
 
-<p align="center">
-  <img src="docs/images/catdesk_preview.gif" alt="CatDesk in ChatGPT Web"><br>
-  <em>ChatGPT Web 中的 CatDesk</em>
-</p>
+## 專案用途
 
-# 免責聲明
+- **官方 upstream：** https://github.com/Xeift/CatDesk
+- **Upstream source of truth：** `Xeift/CatDesk` 官方 stable tag
+- **目前 upstream baseline：** `v0.7.0`
+- **目前 upstream commit：** `cc5daf850cfa5bcd6cae8e414b9009eeeba0a6d8`
+- **Downstream 版本命名：** `vX.Y.Z-custom.N`
+- **已接受 downstream release：** `v0.5.0-custom.3`（不變，目前 production provenance）
+- **Candidate：** `upgrade/v0.7.0` onto `v0.7.0`（待審，未接受，不做 production rollout）
+- **Production source of truth：** 通過驗收與 audit 後的這個 private repository
 
-這是一個獨立的開源專案，與 OpenAI 無關，也未獲得 OpenAI 背書。我們一開始只是把它做成個人工具，後來決定開源。部分功能仍可能有 bug，並可能造成非預期行為。請自行承擔使用風險。我們不對此工具造成的任何損失負責。強烈建議在 VM 或容器內執行。
+未來更新時，**不能用乾淨 upstream checkout 直接取代本 repo**。新版必須保留下方記載的 downstream contract，同時保留新 upstream release 的功能。
 
-# 為什麼要用 CatDesk？
+## 維護角色與流程
 
-和 Antigravity（很會說早安）以及 Claude Code（RIP 5 小時額度 💀）相比，Codex 的每週額度非常大方（而且常常重置用量），這也是我們這麼喜歡 OpenAI 的原因。
+維護流程固定保持簡單：
 
-<p align="center">
-  <img src="docs/images/codex_2x_usage.png" alt="Codex reset usage frequently🙏" width="700"><br>
-  <em>Codex 經常重置用量🙏</em>
-</p>
+1. **漢秦哥**決定是否升級 CatDesk。
+2. **ChatGPT**分析 upstream release、規劃更新方式並 review 結果。
+3. **Hermes `default` profile**實際執行 port、build、test 與本機驗證。
+4. **Hermes `auditor` profile**獨立驗證，不能由 default 自己宣告正確。
+5. ChatGPT 判讀 audit 結果，決定 remediation 或 advance。
+6. 若需要修補，由 Hermes `default` remediation，再重新 audit。
 
-但如果你在做大型專案，額度仍然會很快用完。
+本 repo 用兩層定義 CatDesk 更新的 authority：
 
-<p align="center">
-  <img src="docs/images/no_remaining_usage.png" alt="We used up our Codex quota on the first day after it reset" width="700"><br>
-  <em>我們的 Codex 額度在重置後第一天就用完了</em>
-</p>
+- **README（本檔）是 canonical behavioral contract** — 無論哪一版 release，production CatDesk 都必須維持的行為契約。
+- **`skills/catdesk-release-update/SKILL.md`（repo-tracked）是 canonical operational procedure** — Hermes 實際執行更新的方式。
 
-然後你得再等 7 天。那剩下這一週要幹嘛？
+本機 Hermes runtime entrypoint
 
-解法來了：大多數 Plus 使用者每週的 Thinking 訊息額度甚至用不到 10%。
+`~/.hermes/skills/software-development/catdesk-release-update/SKILL.md`
 
-**_那為什麼不用每週 3,000 則訊息來寫程式？_**
+只是 symlink entrypoint，必須指向上面 repo-tracked skill。若 README 與 Skill 衝突，以 README 為準：立即停止 upgrade，先把 Skill 對齊 README，再繼續。
 
-這就是 CatDesk 的核心概念！它讓 ChatGPT Web 擁有 `write`、`run_command` 等工具，可以直接修改你電腦上的檔案。
+每次升級前，Hermes 必須先 fetch/sync 本 repo、確認 `origin/main`、讀完本 README 與 repo-tracked skill、確認 runtime skill entrypoint 指向 repo-tracked 檔案，然後才查目前 accepted `vX.Y.Z-custom.N` tag 與 rollback 版本。不得靠記憶或舊 worktree。
 
-<p align="center">
-  <img src="docs/images/thinking_usage_limits.png" alt="ChatGPT reasoning usage limits for GPT-5.5 and GPT-5.6" width="900"><br>
-  <em>GPT-5.5：<a href="https://web.archive.org/web/20260519111010/https://help.openai.com/en/articles/11909943-gpt-55-in-chatgpt">每週 3,000 則訊息</a>，GPT-5.6：<a href="https://help.openai.com/en/articles/20001354-gpt-56-in-chatgpt">未知</a>，但我們從來沒有撞到上限</em>
-</p>
+## 目前 downstream custom contract
 
-# 原理是什麼？
+### 1. Read / write roots 必須分離
 
-1. 需要 ChatGPT Plus 或更高級別的訂閱。
-2. CatDesk 會在你的電腦上執行成一個本機 MCP server。它可以執行指令和編輯檔案，功能類似 Codex。
-3. 你可以透過 Custom Connector，把 ChatGPT Web 連接到 CatDesk。這項功能只提供給 Plus 和 Pro 使用者。
-4. 完成！現在 ChatGPT Web 可以控制你的電腦並在上面寫程式。
+Production CatDesk 在 upstream workspace boundary 之外，支援明確設定的額外讀寫 roots。
 
-簡單來說：
-
-```text
-ChatGPT Web + CatDesk
-= 精簡版 Codex
-= 沒有 cron 和其他主動工具的 OpenClaw
-```
-
-我們以前用 GPT-5.2 測過，效果很差。不過現在 **GPT-5.4 Thinking 在工具呼叫與電腦操作上已經非常強。** 我們第一次用 GPT-5.4 測 CatDesk 時，真的被效果嚇到了。GPT-5.5 和 GPT-5.6 又更順，而 GPT-5.6 使用 CatDesk 的能力尤其強，而且速度也非常快。
-
-# ChatGPT Chat + CatDesk、Codex 與 API 的差異（以 Plus 方案為例）
-
-|       | ChatGPT Chat + CatDesk                    | Codex              | OpenAI API       |
-| ----- | ----------------------------------------- | ------------------ | ---------------- |
-| 用量  | 每週 3,000 則訊息                        | 大方的每週額度     | 按量付費         |
-| 優點  | 穩定、不需額外付費，而且額度幾乎無限\* | 穩定且不需額外付費 | 穩定             |
-| 缺點  | 沒有原生 Codex 那麼順                    | 很快就會用完       | Token 很貴       |
-
-\*假設你每天睡 6 小時，而且每天都使用 CatDesk。那麼你每小時可以傳送 3,000 / (24 - 6) / 7 = 23.8 則訊息。由於 Thinking 和工具呼叫本身需要時間，因此要真的把每週 3,000 則訊息用完其實非常困難。
-
-# 類似專案
-
-如果你不想使用 CatDesk，也可以試試以下類似專案：
-
-| 專案 | 說明 |
-| --- | --- |
-| [Desktop Commander](https://github.com/wonderwhy-er/DesktopCommanderMCP) | 通用型 MCP server，可操作本機檔案系統、終端機、程序管理、編輯與自動化。 |
-| [DevSpace](https://github.com/Waishnav/devspace) | 自架 MCP server，讓 ChatGPT 和其他支援 MCP 的宿主獲得類似 Codex 的開發流程。 |
-| [CodexPro](https://github.com/rebel0789/codexpro) | 給 ChatGPT 使用的本機 MCP 程式開發工具，只能操作明確允許的 repository。 |
-| [ChatGPT Local Coder](https://github.com/hoangcoderr/chatgpt-local-coder) | 自架 MCP server，讓 ChatGPT Web 使用檔案系統、Shell、Git、patch 與專案上下文工具。 |
-| [Local Coding Agent](https://github.com/LongNgn204/local-coding-agent) | 給 ChatGPT Web 和其他 MCP client 使用的本機開發 workspace。 |
-| [Proxide](https://github.com/tt-a1i/proxide) | 與 agent 無關的 workspace bridge，可讓網頁版模型透過 MCP 或 browser fallback 操作本機 repository。 |
-| [codex-mcp](https://github.com/mollehxh/codex-mcp) | 小型 MCP server，透過 stdio 或 HTTP 提供類 Codex workspace 介面。 |
-
-> [!NOTE]
-> 上述專案皆不屬於我們，我們也不是其維護者。列在這裡僅供參考。
-
-# 誰會需要這個？
-
-- Codex 額度重置沒幾天就用完的人（我們🥺）
-- 做 Web 開發或爬蟲的人。（CatDesk 透過 chrome-devtools-mcp 整合，讓 ChatGPT Web 可以讀取網頁元素並控制瀏覽器分頁。）
-
-# 快速開始
-
-> [!CAUTION]
-> 這個工具權限非常高，理論上可以把你的整顆硬碟刪光，或產生其他非預期結果。
-> 請在 VM 或容器內執行（DevContainer 是個不錯的選擇）。
-> 把它當成 OpenClaw 一樣對待，保持容器化與隔離。
-
-1. 用 npm 全域安裝 CatDesk。
-
-   ```bash
-   npm install -g catdesk
-   ```
-
-2. 在任意終端機目錄執行 CatDesk。
-
-   ```bash
-   catdesk
-   ```
-
-   CatDesk 啟動後，可以選擇 `Control Computer`、`Control Browser` 或 `Both`。在模式選擇畫面按 `l` 可以在 English 與繁體中文之間切換；語言偏好會儲存在 `~/.catdesk/config.toml`。繁體中文會套用到主 Dashboard、設定、瀏覽器選擇、ngrok 設定，以及 TUI 顯示的常見 runtime log 訊息；為了方便除錯，匯出的 log 仍保留原始文字。如果啟用了瀏覽器控制，請選擇一個支援的 Chromium 瀏覽器。在 macOS 上，除了 `PATH` 中的 binary，CatDesk 也會偵測 `/Applications` 與 `~/Applications` 裡的標準瀏覽器 App bundle。
-
-   第一次啟動時，CatDesk 會要求你輸入 **ngrok authtoken** 和 **ngrok static domain**（例如 `my-app.ngrok-free.dev`）。這兩項都可以從 [ngrok dashboard](https://dashboard.ngrok.com/get-started/setup) 取得，並會儲存在 `~/.catdesk/config.toml`，之後啟動時自動重用。
-
-   CatDesk 預設監聽 `3200` port。可以用 `PORT` 覆寫。Workspace root 預設為你啟動 CatDesk 時所在的目錄，也可以用 `WORKSPACE_ROOT` 覆寫。
-
-   第一次從 macOS Terminal.app 啟動時，CatDesk 會詢問你是否要使用專用的 `CatDesk` Terminal profile，並把選擇儲存在 `~/.catdesk/config.toml`。如果啟用，而且目前分頁尚未使用該 profile，CatDesk 會套用它、關閉暫時建立的 helper window，並要求你在該分頁再次執行相同指令。之後啟動時會直接重用已儲存的偏好。設定 `CATDESK_SKIP_MACOS_TERMINAL_PROFILE=1` 可以暫時保留目前的 Terminal session，不論已儲存的偏好為何。
-
-3. 等待 TUI 顯示 MCP Server URL。
-
-4. 開啟 [ChatGPT connector settings](https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins)。
-
-5. 在彈出視窗中填寫 connector 表單：
-   - Name：`CatDesk`，或任何你喜歡的名稱
-   - MCP Server URL：CatDesk TUI 顯示的完整 URL
-   - Authentication：`None`
-
-6. 點擊 `I understand and want to continue`。
-
-7. 點擊 `Create`，再點擊 `Connect`。
-
-   - 權限預設為 **Allow read actions**。如果想要最順暢的體驗，我們建議使用 **Allow all actions**（等同 Codex 的 `--yolo`；請小心使用）。
-
-8. 把以下內容加入 ChatGPT 的 `Custom instructions`：
+目前 production policy：
 
 ```text
-CatDesk is a coding tool and a custom connector. Always use CatDesk if the user wants to do anything related to file operations. Always call `catdesk_instruction` after `list_resources`, and follow the instructions it contains.
+WORKSPACE_ROOT=/Users/hong/workspace
+CATDESK_READ_ROOTS=/Users/hong:/Volumes/ExpansionDrive
+CATDESK_WRITE_ROOTS=/Volumes/ExpansionDrive
 ```
 
-9. 開始在 ChatGPT Web 中使用 connector。幾個重要提示：
+必須保留的語意：
 
-- 我們建議讓 ChatGPT 自動決定要使用哪個 connector。你也可以用 `/` 或 `@` 手動選 CatDesk。這樣 ChatGPT 只能存取你手動指定的 connector，穩定性可能更好。缺點是 `web.search` 和 `web.open` 會被停用，也就是無法搜尋最新資訊。`web` 工具與 custom connector 不能同時使用。
+- `WORKSPACE_ROOT` 仍是一般 workspace boundary。
+- `CATDESK_READ_ROOTS` 只增加可讀取位置。
+- `CATDESK_WRITE_ROOTS` 才增加可寫入、編輯、刪除，以及 move source / destination 的位置。
+- **可讀絕對不能自動等於可寫。**
+- 多個 root 必須遵循作業系統 path-list semantics。
+- 未經明確批准與測試，不得把權限粗暴擴大成整個 home 或整顆磁碟。
 
-<table align="center">
-  <tr>
-    <td align="center">
-      <img src="docs/images/connector_slash.png" alt="Select CatDesk from the slash command menu" width="300"><br>
-      <em>使用 <code>/</code> 手動選擇 CatDesk</em>
-    </td>
-    <td align="center">
-      <img src="docs/images/connector_at.png" alt="Select CatDesk from the at-sign menu" width="300"><br>
-      <em>使用 <code>@</code> 手動選擇 CatDesk</em>
-    </td>
-  </tr>
-</table>
+### 2. Canonical path 安全邊界
 
-- 為了提升效能並避免記憶體使用量過高，我們強烈建議**每個小功能都開一個新 session**。切換聊天前，可以請 ChatGPT 使用 `create_handoff`。CatDesk 會準備一份名為 `catdesk_handoff_<workspace-name>_<short-id>.md` 的 handoff，內容包含目前目標、已完成工作、重要決策、驗證結果、下一步以及 Git 狀態；接著由 ChatGPT 把它存進長期保存的 Library，而不是寫進 workspace。下一個 session 呼叫 `catdesk_instruction` 時，ChatGPT 會使用完整 workspace identity 前綴 `catdesk_handoff_<workspace-name>_<short-id>` 搜尋 Library，而不是只用 workspace 名稱。若只有一份完全符合目前 workspace 的 handoff，就讀取並在成功讀完後刪除；若有多份完全符合的結果，會先詢問要使用哪一份，再只讀取並刪除選中的 handoff。要恢復 handoff，必須啟用 **Library Search**。不要把憑證、token、密碼或其他秘密寫進 handoff。工具呼叫超過 50 次之後，畫面可能會開始非常卡。
-<p align="center">
-  <img src="docs/images/high_ram_usage.png" alt="3.9 GB Memory usage🥹" width="300"><br>
-  <em>3.9 GB 記憶體用量🥹</em>
-</p>
+所有 extra-root access 都必須維持安全檢查：
 
-- 如果你修改了 MCP 相關設定（包含 tool mode 或啟用／停用 widget），需要開一個新聊天，並在 [settings](https://chatgpt.com/#settings/Plugins) 中刷新 CatDesk。最可靠的方式是刪除 CatDesk 後重新安裝（步驟 2–7）。
+- 已存在的 candidate path 要 canonicalize。
+- 尚不存在的 path，要先 canonicalize 最近的既存 parent，再做 boundary validation。
+- traversal 不得逃出允許 roots。
+- symlink 不得逃出允許 roots。
+- read 與 write boundary 必須分開驗證。
 
-<table align="center">
-  <tr>
-    <td align="center">
-      <img src="docs/images/refresh_catdesk.png" alt="Refresh CatDesk in ChatGPT settings" width="500"><br>
-      <em>在 ChatGPT 設定中刷新 CatDesk</em>
-    </td>
-    <td align="center">
-      <img src="docs/images/remove_catdesk.png" alt="Remove CatDesk from ChatGPT settings" width="500"><br>
-      <em>從 ChatGPT 設定中移除 CatDesk</em>
-    </td>
-  </tr>
-</table>
+### 3. Change tracking 必須使用 canonical target
 
-# 技術棧
+Change tracking 必須以 canonicalized target 建立 snapshot，避免 external allowed roots、symlink、edit、delete、move 的 before/after diff 失真。
 
-| 部分 | 技術 |
-| --- | --- |
-| Core | Rust |
-| MCP server | 自訂實作（不使用 SDK） |
-| MCP protocolVersion | `2026-07-28` |
-| Server | Axum + Tokio |
-| TUI | Ratatui |
-| Tunnel | ngrok |
-| 瀏覽器控制 | chrome-devtools-mcp |
-| Widget | HTML + JavaScript |
-| 發布方式 | npm |
+### 4. Command / move 必須使用正確的 write boundary
 
-# 工具
+`src/mcp.rs` 的 downstream 行為必須持續區分：
 
-CatDesk 有兩種本機工具模式：`multi-tools` 提供 11 個工具，`read-only` 提供 4 個工具。
+- command/current working directory：只需要 read boundary；
+- move source：需要 write permission；
+- move destination：需要 write permission；
+- write boundary 失敗時，要回報 write-root violation，而不是退化成一般 workspace error。
 
-在 `multi-tools` 模式下，CatDesk 的本機工具如下：
+### 5. Append-only 本機 usage ledger
 
-| 工具                    | 類型  | 功能                                                                     |
-| ----------------------- | ----- | ------------------------------------------------------------------------ |
-| `catdesk_instruction`   | 指南  | 回傳 CatDesk 使用說明並顯示 Binagotchy                                  |
-| `read`                  | 讀取  | 從 workspace 讀取一個或多個文字檔                                       |
-| `search`                | 讀取  | 使用 `rg`、`grep` 或內建搜尋器搜尋 workspace 文字                        |
-| `write`                 | 寫入  | 建立或覆寫檔案                                                           |
-| `edit`                  | 寫入  | 原子化套用受保護的 replace/range 編輯                                   |
-| `create_handoff`        | 讀取  | 準備 workspace 專屬的 Library handoff，不修改 workspace                  |
-| `delete`                | 寫入  | 刪除檔案或目錄                                                           |
-| `run_command`           | Shell | 執行短時間 Shell 指令並等待完成                                          |
-| `start_command`         | Job   | 啟動長時間指令，並立即回傳 job ID                                        |
-| `poll_command`          | Job   | 讀取背景指令的增量輸出與狀態                                             |
-| `cancel_command`        | Job   | 停止背景指令以及其子程序樹                                               |
+Production CatDesk 必須把既有 MCP token accounting 以最小化的本機 event ledger 暴露在 `~/.catdesk/usage.jsonl`，供下游 usage consumer 使用。
 
-長時間執行的指令刻意與 MCP HTTP request 的生命週期分離。Build、compile、dependency installation、長時間 test suite 與 development server 應使用 `start_command`，接著以回傳的 cursor 呼叫 `poll_command`。Poll response 有大小限制；如果 `hasMoreOutput` 為 true，即使 job 已經結束，也要持續用 `nextCursor` 輪詢，直到把剩餘輸出讀完。`run_command` 適合較短的指令，而且 timeout 上限為 120 秒。
+必須保留的語意：
 
-如果啟用了瀏覽器模式，CatDesk 還可以公開額外的 browser/devtools 工具。這些工具由 browser bridge 提供，所以實際工具列表取決於你的環境。
+- `config.toml` 既有累積 usage totals 繼續保存；ledger 是補充，不取代原本 totals。
+- 每次記錄 MCP tool call 時 append 一行 JSONL，穩定欄位為 `eventId`、`timestampMs`、`inputTokens`、`outputTokens`、`bucket`、`pricingModel`。
+- `pricingModel` 記錄供下游估算成本使用的 ChatGPT 模型 identity；CatDesk 在 UI 仍維持獨立的 `catdesk-mcp` usage source。ChatGPT runtime 換新模型時只更新版本化的 `CURRENT_USAGE_PRICING_MODEL`，不得從 accounting `bucket` 猜測模型。
+- `eventId` 必須對每個 recorded event 唯一；即使 ledger row 被移動或重排，也要維持下游 dedup 的穩定 identity。
+- 每行不要重複保存可推導的 `totalTokens`。
+- Production 假設 CatDesk daemon 是 ledger 唯一 writer；若 crash 留下截斷的最後一行，下次 append 必須先補 newline 隔離殘片，再寫入下一個完整 event。
+- ledger 寫入失敗只能記 warning，不得讓 MCP tool response 跟著失敗。
+- Unix-like 系統中新建立的 ledger 檔案必須為使用者私有（`0600`）。
+- 不得為 ledger 上線以前的累積 usage 虛構 timestamp 歷史；舊累積 totals 繼續留在 `config.toml`。
+- `usage.jsonl` 是 runtime state，絕對不能 commit 到本 repository。
 
-`search` 會優先使用 `rg`，如果沒有則退回 `grep`，最後才使用 CatDesk 內建搜尋器。安裝 ripgrep 並非必要，但能提供最佳的搜尋效能與行為。
+### 6. Upstream 新功能不能被 custom 覆蓋掉
 
-# Context window
+Downstream port 不能為了保留舊 custom 而把新版 upstream 功能洗掉。
 
-根據[這篇文章](<https://help.openai.com/en/articles/11909943-gpt-53-and-gpt-54-in-chatgpt#:~:text=Thinking%20(GPT%E2%80%915.4%20Thinking)>)以及[這段程式碼](https://github.com/openai/codex/blob/main/codex-rs/models-manager/src/model_info.rs#L85)，ChatGPT Web 與 Codex 的 context window 並不相同。
+目前 `v0.7.0` baseline 至少要保留：
 
-| 方案 | CatDesk + ChatGPT Web（in + out = 總和） | Codex CLI（總和）      |
-| ---- | ---------------------------------------- | ---------------------- |
-| Plus | 128K + 128K = 256K                       | 258K（1M experimental） |
-| Pro  | 272K + 128K = 400K                       | 258K（1M experimental） |
+- `read` 支援 `paths` array；
+- 每批最多 32 個 paths；
+- upstream batch read size limit；
+- `poll_command` long-poll 行為與 documented wait limit；
+- cursor-based incremental command output；
+- job 已 terminal 但 `hasMoreOutput=true` 時仍必須繼續 drain buffered output；
+- `v0.5.0` 之前已導入的 connector bootstrap/widget completion 行為；
+- Traditional Chinese mode selection 與持久化的 UI language preference；
+- opt-in macOS Terminal.app profile flow 與持久化偏好；
+- macOS 在標準 `/Applications` 與 `~/Applications` App bundle 中的 Chromium-family detection；
+- upstream `v0.7.0` session handoff（`create_handoff`）含 workspace-local storage 與 ChatGPT Library recovery（原生實作，`src/handoff.rs` 無 downstream 客製）；
+- upstream Linux sandbox SSH authentication 行為。
 
-# FAQ
+每次新 upstream release 都必須重新閱讀 release notes，動態產生 release-specific smoke checks。
 
-## 可以關掉紅色 CSP 按鈕嗎？
+## 目前 custom source scope
 
-<table align="center">
-  <tr>
-    <td align="center">
-      <img src="docs/images/csp_button.png" alt="The red CSP button shown in tool calls" height="96"><br>
-      <em>紅色 CSP 按鈕</em>
-    </td>
-    <td align="center">
-      <img src="docs/images/enforce_csp.png" alt="Advanced connector settings with Enforce CSP in developer mode" height="96"><br>
-      <em>Advanced connector settings 中的 <code>Enforce CSP in developer mode</code></em>
-    </td>
-  </tr>
-</table>
-
-可以。開啟 [Advanced connector settings](https://chatgpt.com/#settings/Connectors/Advanced)，然後啟用 `Enforce CSP in developer mode`。這個設定會移除紅色按鈕。CatDesk 會自動把目前的 ngrok domain 加進 widget CSP，因此開啟 CSP enforcement 後 widget 應該仍能正常運作。
-
-## 明明已經連過了，為什麼還一直要求重新 Connect？
-
-目前看不出 connector 什麼時候會觸發 `Connect` 有明顯規律。我們可以確定它不是依照 tool call 次數觸發，但具體原因我們也不知道。
-
-<table align="center">
-  <tr>
-    <td align="center">
-      <img src="docs/images/connect1.png" alt="Connector asks to connect again" width="700"><br>
-      <em>Connector 再次要求連線</em>
-    </td>
-    <td align="center">
-      <img src="docs/images/connect2.png" alt="Connector asks to connect again (After you click Continue)" width="700"><br>
-      <em>Connector 再次要求連線（點擊 Continue 之後）</em>
-    </td>
-  </tr>
-</table>
-
-看起來這是一個 bug，而且他們已經修好了 🥳。
-
-## CatDesk 可以用在其他 App 嗎？
-
-理論上可以。CatDesk 也可能能和其他支援自訂遠端 MCP server 的 App 搭配，包括 Claude。（雖然我們不覺得有人會拿 CatDesk 配 Claude，因為 Claude Chat 模式和 Claude Code 共用同一份使用額度。）
-
-不過 CatDesk 是專門為 ChatGPT Chat 以及它的 Custom Connector 流程打造的。（它們先把這個功能改名為 _Apps_，後來又改名成 _Plugins_，但為了避免和 _Application_ 混淆，我們還是比較喜歡叫它 _Connector_。）ChatGPT Chat 是 CatDesk 主要設計與測試的環境，因此其他 App 的體驗可能沒有這麼順。
-
-## Input/output token 是怎麼算的？
-
-CatDesk 無法從 ChatGPT Web 取得官方 token usage 數字。它會在本機使用 `o200k_base` 估算，這和 GPT-5.5 類模型使用的是同一 tokenizer family，因此數字有參考價值，但仍然只是估算值。
-
-| 欄位           | 符號 | 意義                         | 價格                           |
-| -------------- | ---- | ---------------------------- | ------------------------------ |
-| `inputTokens`  | `↓`  | Tool input ≈ LLM output      | ≈ `$30.00 / 1M` output tokens  |
-| `outputTokens` | `↑`  | Tool output ≈ LLM input      | ≈ `$5.00 / 1M` input tokens    |
-| `totalTokens`  | `Σ`  | `inputTokens + outputTokens` | `input price + output price`   |
-
-CatDesk 不會計算：
-
-- 完整的 ChatGPT 對話
-- 隱藏 prompt 或 reasoning token
-- OpenAI 端其他內部 token
-
-載入動畫只是視覺效果。ChatGPT Web 不會把部分 MCP tool input/output 即時串流給 CatDesk，所以 widget 會先在本機播放動畫，等真正的 tool result 回來後再鎖定到估算值。
-
-## Workspace 是什麼？
-
-Workspace 是 CatDesk 被允許操作的根目錄。
-
-預設就是你啟動 CatDesk 時所在的目錄。也可以用 `WORKSPACE_ROOT` 覆寫。
-
-File tool 都會以此目錄為 base path，超出 workspace 的路徑會被拒絕。
-
-## AGENTS.md 要放哪裡？
-
-可以放在 3 個位置：
-
-1. Workspace root
-2. `~/.catdesk/AGENTS.md`
-3. `~/.codex/AGENTS.md`
-
-CatDesk 會按照上述順序尋找 `AGENTS.md`，每次呼叫 `catdesk_instruction` 都會重新檢查。你也可以手動選擇要使用哪一份 `AGENTS.md`。
-
-<p align="center">
-  <img src="docs/images/set_agents_md.png" alt="Set AGENTS.md manually" width="500"><br>
-  <em>手動設定 AGENTS.md</em>
-</p>
-
-## Widget 一片空白怎麼辦？
-
-<p align="center">
-  <img src="docs/images/blank_widget.png" alt="Empty widget/function call" width="500"><br>
-  <em>空白 widget/function call</em>
-</p>
-
-1. 直接重新整理頁面並重新連接 connector。
-2. 停止回覆，再重新傳送訊息。
-
-這是 ChatGPT 端的 bug，我們這邊沒有辦法修，改 CatDesk 程式碼也解決不了。這個 bug 可能是在 4 月 15 日左右出現的。
-
-# 安全性
-
-> [!CAUTION]
-> **絕對不要**把 `MCP Server URL` 分享給任何人。任何拿到這個 URL 的人都可能存取你的電腦。
-
-URL 由以下部分組成：
-
-| 部分         | 範例                          | 意義                           |
-| ------------ | ----------------------------- | ------------------------------ |
-| Public URL   | `https://xxxx.ngrok-free.dev` | 你的 ngrok static domain       |
-| Random path  | `/Ab3kL9xQ2pTm7VhC`           | 第一次啟動時隨機產生的路徑     |
-| MCP endpoint | `/mcp`                        | 真正的 MCP endpoint            |
-
-因此完整 URL 會長這樣：
+`v0.7.0` candidate downstream 目前只修改 upstream 的四個 source files：
 
 ```text
-https://xxxx.ngrok-free.dev/Ab3kL9xQ2pTm7VhC/mcp
+src/change_tracking/mod.rs
+src/mcp.rs
+src/state.rs
+src/workspace_tools.rs
 ```
 
-Static domain 和 random path 都會儲存在 `~/.catdesk/config.toml`，所以完整 MCP URL 在每次啟動後都會保持不變。Connector 只需要設定一次。
+這三個檔名不是永久規則。未來 upstream 架構可能改變，屆時可能需要更少、不同，甚至零個修改。要保存的是 **behavioral contract**，不是舊版檔案配置。
 
-# 關於 Binagotchy
+## 穩定 macOS runtime 身份與部署契約（Phase B — PRODUCTION_ACCEPTED）
 
-<p align="center">
-  <img src="docs/images/binagotchy.gif" alt="Binagotchy!" width="500"><br>
-  <em>Binagotchy!</em>
-</p>
+### Root cause
 
-這個角色是一隻可愛的鯊魚貓！其實我們在做 CatDesk 之前就已經做了它，後來決定把它放進這個專案。
+macOS TCC 以 binary 的有效身份（filesystem path、code signature、CDHash、Designated Requirement）綁定權限。過去部署使用版本化路徑 `~/.local/share/catdesk/<version>-custom/bin/catdesk` 搭配 **ad-hoc** 簽署（`Identifier=catdesk-…`、`Signature=adhoc`、`CDHash=aaa5b…`），每次新版都呈現全新的 TCC 身份（path + ad-hoc CDHash/DR），不會繼承舊授權，導致 TCC rows 孤兒化、每次都要重新彈窗。
 
-CatDesk 預設會在每次啟動時產生一隻隨機 Binagotchy。如果你看到喜歡的，可以在啟動畫面把它設成你的夥伴。系統也會把每一隻 Binagotchy 自動儲存到 `~/.catdesk/binagotchy`。你也可以下載它（更精確地說，是匯出）！支援 `.png` 和 `.gif`。歡迎拿去任何地方使用。這個專案與 Binagotchy 都採用 MIT License。順帶一提，Binagotchy 完全由腳本生成，沒有使用任何 text-to-image 或 diffusion model。
+已由 ad-hoc production binary `0.5.0-custom.3`（`CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`、`Identifier=catdesk-e6cd98f31dbf91fd`）對比任何穩定簽署 binary 確認此原因。
+
+### 部署契約（canonical）
+
+每次 promotion 都必須走且只走這條鏈路：
+
+```text
+accepted tag vX.Y.Z-custom.N
+  → versioned artifact ~/.local/share/catdesk/<version>-custom/bin/catdesk（build provenance）
+  → 以穩定簽署身份 com.hong.catdesk 重新簽署
+  → 實體穩定 runtime ~/.local/share/catdesk/runtime/bin/catdesk（launcher 唯一目標）
+  → launcher exec: spawn /Users/hong/.local/share/catdesk/runtime/bin/catdesk
+  → production acceptance（ephemeral job + triple stability + MCP/Cloudflare/roots）
+```
+
+未來升級必須遵循 GitHub-first → accepted tag → versioned artifact → stable sign/copy → stable runtime → production acceptance；**不可直接在 production 執行 `git pull`**。
+
+規則：
+
+- `runtime/bin/catdesk` 必須是 **實體檔案**，永遠不是 symlink。所有檢查（`test -L`、`codesign -dv`、`shasum -a 256`）都要對檔案本體執行。
+- Rollback 是把 **前一個 accepted artifact 重新簽署並複製** 到同一個 `runtime/bin/catdesk` 路徑。`runtime` 啟用後，launcher 永遠不再指回任何版本化路徑。
+- 驗證階段使用 `~/.local/share/catdesk/runtime-next/bin/catdesk`（實體複製 + 簽署 + 驗證），通過後才 promotion 到 `runtime/bin`。在通過所有 gate 與獨立 audit 前，不得修改 `runtime/bin` 或 launcher。
+- `runtime/` 與 `runtime-next/` 是 production runtime state，**絕對不能 commit**。
+
+> **Canonical / current production（Phase B — PRODUCTION_ACCEPTED）：** launcher 的**唯一**目標是實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（簽署 `Identifier=com.hong.catdesk`、`DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`）。版本化產物 `~/.local/share/catdesk/<version>-custom/bin/catdesk` 僅保留為 **provenance / rollback source**，**不得**再作為 launcher target。歷史備註：Phase B 啟用前，實際運行的 child 曾暫時為 `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk`（版本化路徑、ad-hoc `CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`、`Identifier=catdesk-e6cd98f31dbf91fd`）—— 該狀態已退役，不得視為當前 production。
+
+### 穩定簽署身份（一次性本機 bootstrap）
+
+讓契約得以 TCC-persistent 的穩定身份為：
+
+- **Name：** `CatDesk Local Code Signing`
+- **Identifier：** `com.hong.catdesk`（`codesign --identifier com.hong.catdesk`）
+- **Certificate SHA-1（non-secret）：** `7F453106476B0DA6B2FEDBC4BC6F81B8C9ACA51A`
+- **Certificate SHA-256（non-secret）：** `B5705686206499D677B6AF20C470D7C4C7A3E51BE1203738F2DA3F9BC8D3B043`
+- **Subject（non-secret）：** `CN=CatDesk Local Code Signing, OU=CatDesk Local, O=Hong Local, C=TW`
+- **Expiry（non-secret）：** `2028-12-04`
+- **Expected DR（non-secret）：** `identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`
+- **TeamIdentifier：** `not set`（本機 self-signed）
+
+Bootstrap 是在該 Mac 上 **一次性本機操作** 建立 Keychain certificate/keypair。Certificate 與 private key 是 **本機 secret，絕對不得 commit 到 Git、不得寫入本 repository、不得留下 log**（無 p12、無 password、無原始 key material —— 僅記錄上述 non-secret fingerprint/subject/expiry）。在另一台機器重建或輪替身份時，必須保留相同 `Identifier`，且不得視為 repo 內資產。
+
+### 身份實證（跨 binary DR 穩定）
+
+以此身份簽署兩份不同內容的 binary，已獨立驗證 DR 完全相同、即使 hash 不同：
+
+- **A（0.5.0-custom.2 內容）簽署後：** `SHA256=617328bd33dfe7b5d02e4e722c1d0b6db4fdeb3b01b2c096b1b81356bb5f372a`、`CDHash=8ec4dd1bfa00d343aafb80a699a3e265ed2e23f7`、`Identifier=com.hong.catdesk`、`Authority=CatDesk Local Code Signing`
+- **B（0.5.0-custom.3 內容）簽署後：** `SHA256=7e840ab9fc32f38adfa4fb187f92833c24c68fba4881410530053007d83023ac`、`CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`、`Identifier=com.hong.catdesk`、`Authority=CatDesk Local Code Signing`
+- **兩者皆：** `Designated Requirement = identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"` 且 `codesign --verify --strict --verbose=4` = `valid on disk` + `satisfies its Designated Requirement`。
+
+這證明穩定 certificate + 穩定 identifier 能在 binary 內容變動下維持 **穩定 DR**，即 TCC-persistence 的必要條件。由目前 accepted `0.5.0-custom.3` 複製並簽署至 `runtime-next/bin/catdesk` 的實體 staging 亦必須呈現相同 DR（目前 staging `CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`、`Identifier=com.hong.catdesk`、DR 同上）。
+
+### 驗證門檻（不得只看 `find-identity` 文字）
+
+`security find-identity -v -p codesigning` 可能對此本機 self-signed certificate 顯示 `CSSMERR_TP_NOT_TRUSTED`。此 warning 僅為 **資訊提示，不是 blocker** —— 真正的 gate 是 `codesign --verify --strict` 與 DR 滿足度。
+
+每次 deploy/stage 都必須以以下指令為 gate：
+
+```bash
+codesign --verify --strict --verbose=4 /Users/hong/.local/share/catdesk/runtime-next/bin/catdesk  # 或 runtime/bin/catdesk
+codesign -dv --verbose=4 /path/to/binary  # Identifier=com.hong.catdesk, Authority=CatDesk Local Code Signing, CDHash 吻合預期
+codesign -d -r - /path/to/binary          # designated => identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"
+shasum -a 256 /path/to/binary
+test ! -L /path/to/binary                  # 必須是實體檔案
+```
+
+不得僅以 `find-identity` 列表文字作為通過依據；必須核對實際 `codesign` 驗證與預期 fingerprint/identifier/DR。Trust-policy 文字差異不代表簽署失效。
+
+### TCC 清理政策
+
+舊版本化路徑的 TCC rows（例如 `0.5.0-custom.3` ad-hoc 路徑）可保留為 **stale cosmetic rows**，直到使用者選擇一次性整理。**禁止** 以 `sqlite3` 或任何直接 DB 寫入方式修改 `~/Library/Application Support/com.apple.TCC/TCC.db` —— 該路徑不被支援且可能毀損 TCC。**不得**為 CatDesk 清理而執行或推薦任何 `tccutil reset`（全域或針對特定 service，例如 `All`、`Accessibility`/`ScreenCapture`/`Automation`）；一般版本更新絕不執行任何 TCC 清理/重置。若使用者要清理 stale entries，**僅建議**使用受支援的 System Settings UI（**System Settings → Privacy & Security**）檢視/移除舊版本化路徑的 stale entry，必要時再從穩定的 `runtime` 路徑重新互動授權。除非已在實機上對「該特定 client/service」的 `tccutil reset <service> <client>` 精確作用範圍完成獨立實證，且明確知道不會一併重置當前 stable runtime 的權限，否則不得為 CatDesk 清理推薦或執行任何 `tccutil reset`。清理 **不是 release gate、不是 production blocker**。
+
+### TCC 遷移lesson（一次性 bootstrap）
+
+從舊 ad-hoc／版本化路徑（`~/.local/share/catdesk/<version>-custom/bin/catdesk`，ad-hoc `Identifier=catdesk-…`）第一次遷移到穩定簽署 runtime（`~/.local/share/catdesk/runtime/bin/catdesk`，`Identifier=com.hong.catdesk`、`DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`）時，macOS 可能彈出 **一次新的權限／TCC 授權**。這是 **一次性 bootstrap** —— 使用者授權後，未來 accepted versions 必須 **複製／簽署到相同實體 `runtime/bin/catdesk` 路徑、沿用同一 signing identity／Identifier／DR**，不得把 launcher 改回版本化路徑，否則每版都會新增 TCC client。
+
+### Post-activation acceptance 契約（PRODUCTION_ACCEPTED）
+
+Phase B 的 `PRODUCTION_ACCEPTED` 僅在以下全部通過後授予（記錄為契約，不硬寫 PID）：
+
+- **Ephemeral activation job：** `launchctl bootstrap` one-shot 僅執行 **一次**（`runs=1`、`exit 0`），結束後由重連的 ChatGPT 執行 `launchctl bootout` 清理。
+- **Process-level activation：** 精確 child 取代（`PPID==wrapper` + `exe==/Users/hong/.local/share/catdesk/runtime/bin/catdesk`）、**30 秒 triple stability**（wrapper PID + `runs` + stable child PID 皆不變，`PPID`/`exe` 仍穩定）與 `nc -z 127.0.0.1 3200` TCP 成功。
+- **Post-activation acceptance（重連後 ChatGPT）：** MCP `catdesk_instruction` discover + `catdesk_command`／`search`／`write`／`delete`、ExpansionDrive 讀寫、**write-root denial** 與 **outside-read-root denial**（path-boundary 驗證）以及 **Cloudflare continuity** 全部 PASS，才算 `PRODUCTION_ACCEPTED`。
+
+Launcher 唯一目標為穩定 runtime；穩定 `codesign Identifier=com.hong.catdesk` 且同一 local certificate／DR；Cloudflare tunnel 不變；read／write roots 契約不變。
+
+### Troubleshooting 備註 — 專用 `read` 工具 schema mismatch
+
+專用 `read` 工具的 schema `path` 與 runtime 實際 `paths`／`CATDESK_READ_ROOTS` 不一致，為 **既有、非阻塞的 tool-surface issue**，不是穩定 runtime 或 TCC 的 regression。已另行追蹤，不影響 Phase B 的 `PRODUCTION_ACCEPTED` 契約，亦不得擴張為新 framework。
+
+## Hermes 必須遵守的更新流程
+
+當漢秦哥批准評估新的 stable CatDesk release：
+
+1. 先 fetch/sync 本 repo，確認 local `main` 與 `origin/main` 一致，再讀本 README 與 repo-tracked `skills/catdesk-release-update/SKILL.md`。
+2. 確認 local runtime skill entrypoint 指向 repo-tracked skill，再以 tag/README 讀出目前 accepted downstream tag（`vX.Y.Z-custom.N`）、repo clean state 與 rollback 版本；不得靠記憶或舊 worktree。
+3. Fetch 官方 upstream tags，記錄新 tag、commit、release notes、API/schema/runtime changes。
+4. 一律從 **新的 upstream stable tag** 開始，不得從舊 custom source 整份複製。
+5. 比較目前 accepted downstream behavior 與新版 upstream architecture。
+6. 只 port **仍然必要的最小 custom behavior**；禁止把舊 source file 整份蓋到新版。
+7. 保留新版 upstream 的所有適用功能，custom 必須配合新版架構重新適配。
+8. build 前先跑 formatting、upstream tests 與 downstream boundary/security tests。
+9. 建立 custom production artifact，並分開記錄：
+   - upstream tag / commit；
+   - downstream diff；
+   - upstream official artifact digest（如適用）；
+   - custom binary SHA-256。
+10. Custom binary 必須安裝到版本化路徑，例如 `~/.local/share/catdesk/<version>-custom/bin/catdesk`。
+11. 前一個 accepted custom 版本必須保留做 rollback；deploy 前先備份 launcher / plist。
+12. CatDesk binary update 只改必要部分，production roots/environment 要保留。**CatDesk 更新不得順便重建或修改 Cloudflare tunnel。**
+13. 只重啟 CatDesk service，再跑 production-surface acceptance。
+14. ExpansionDrive I/O、path security 或必要 upstream feature 任一失敗，立刻 rollback，狀態只能是 **PARTIAL/FAIL**，不能宣告 PASS。
+15. 必須交給 `auditor` 做獨立 review。
+16. 全部通過與 audit 後，才 merge 到 `main`，並建立新的 `vX.Y.Z-custom.N` tag。
+
+## Production activation 事故防線
+
+2026-08-31 `v0.5.0-custom.1` prepare/rollback 事故確立以下必要控制：
+
+- 絕不能把 activation helper 提交成 `KeepAlive` launchd service；即使 binary 本身健康，仍可能形成無限 restart／瀏覽器重開迴圈。
+- activation 前必須以 `launchctl print`、`launchctl list` 與 plist registration 證據確認當下 owning launchd domain。不得硬編碼 `gui/<uid>` 或 `user/<uid>`；在猜測 domain 找不到 service 是 domain/registration mismatch，不是 v0.5 runtime regression 的證據。
+- foreground 或 one-shot controller 必須在 CatDesk process tree 外：先快照 launcher/plist hash，只切換 launcher target，提供自足的 backup/rollback recipe（launcher/plist 快照 + provenance），且僅 kickstart CatDesk。Controller **never auto-rolls-back** —— rollback 由外部 ChatGPT 明確決策。
+- `launchctl kickstart -k` 本來就會終止 child；`SIGTERM` 與 Expect `spawn id ... not open` 是重啟證據，不是新 binary crash 的證明。
+- restart 後 controller 只驗 process-level gates：精確 replacement child（PPID==wrapper + exe==stable runtime）、30s triple stability（wrapper PID + `runs` + stable child PID 皆不變且 PPID/exe 仍穩定）以及 `nc -z 127.0.0.1 3200`。health/discover、root invariants 與 Cloudflare continuity 屬於重連後 ChatGPT 的 **post-activation acceptance**，不是 controller gate。
+- local MCP 與 public ingress 的驗證屬於 post-activation acceptance（重連後 ChatGPT 驗收）。Cloudflare 是 active public path 時，stale/legacy ngrok endpoint 的 quota/error 只能記為 stale probe：不是 production ingress evidence，也不得驅動 rollback 或任何 Cloudflare 變更。
+- 兩階段就緒：controller preflight PASS 為 `READY_FOR_PROCESS_ACTIVATION`（可進入 activation）；controller success（精確 child + 30s triple + TCP PASS，或冪等 `ALREADY_ACTIVE` PASS）為 `READY_FOR_POST_ACTIVATION_ACCEPTANCE`；重連後 ChatGPT 驗 MCP/command/Cloudflare/roots 全 PASS 才算 `PRODUCTION_ACCEPTED`。
+
+## 穩定 runtime Phase B 控制器（2026-09-01 — remediation，僅 process-level activation）
+
+首次 Phase B 失敗的兩個 root cause：（1）`launchctl submit` job 被再次分發、失控重跑；（2）controller 寫死 `/health`、`/mcp` 探針，實際 secret route 回 404 卻被誤判為 binary 健康失敗。
+
+Canonical Phase B controller 契約（僅 process-level activation）：
+
+- Controller 永遠不取得 MCP secret slug、不做 MCP discover / command execution，不讀 `~/.catdesk/config.toml` 的 slug/token。
+- `/health`、`/mcp` 不可寫死；HTTP 404 不是 controller 的 binary-health failure，secret route 不在 controller 範圍內。
+- `launchctl submit` 禁止用於 activation one-shot，會被 launchd 再次分發。
+- 遠端執行必須脫離 CatDesk process tree 時（ChatGPT→CatDesk→Hermes，前景 controller 會隨 CatDesk 一起消失），使用經過無害 `run=1` probe 驗證的 **ephemeral `launchctl bootstrap` plist**：unique label `com.hong.catdesk.*`、`RunAtLoad=true`、`KeepAlive=false`、無 `StartInterval`/`WatchPaths`/`StartCalendarInterval`，plist 置於受限 `~/.catdesk/activation/`（0700 目錄、0600 檔案），絕不放入 `~/Library/LaunchAgents`。bootstrap 後該 job 必須只執行一次；清理由重連後的 ChatGPT 執行 `launchctl bootout <domain>/<label>`（或 `bootout <domain> <plist>`），controller 不得自行重啟。
+- Single-flight 使用 `/usr/bin/lockf` 的 `lockf -k -t 0` wrapper re-exec（macOS 無 `flock`），第二個並發實例必須立即 busy 失敗（例如 75、`already locked`），不排隊。
+- Controller 最多只允許 **一次** `launchctl kickstart -k <resolved-domain>/com.hong.catdesk`，無 retry loop、無 auto-rollback；任一 gate 失敗即非 0 退出，保留 private backup，外部分由 ChatGPT 判斷。
+- Controller 的 gates 僅為 process-level：target path 為實體檔案（非 symlink）、`codesign Identifier=com.hong.catdesk` 與 `DR` 有效（`identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`）、動態解析 launchd domain（`gui/<uid>` 或 `user/<uid>`，不 hard-code）、launcher/plist 存在、`nc`/`TCP` 工具可用（`nc -z 127.0.0.1 3200`）；不得 `curl` `/health`/`/mcp`，不得讀/輸出任何 slug。
+- `--activate` 後的 replacement 驗證為精確檢查：先經 `launchctl print <domain>/com.hong.catdesk` 取得 wrapper PID，再以 `ps -axo pid=,ppid=,command=` 找 PPID==wrapper PID 且第一 exe token 精確等於 `$STABLE_RUNTIME` 的 child；加上重啟後 triple 30 秒穩定性（wrapper PID + `runs` + stable child PID 皆不變且 PPID/exe 仍穩定）與 `nc -z 127.0.0.1 3200` 成功。冪等：若 launcher 已精確穩定且 child 已精確穩定則跳過 kickstart，直接做 `ALREADY_ACTIVE` 三重穩定 + TCP。
+- 啟用後的 **acceptance**（MCP discover、command execution、Cloudflare continuity、read/write roots/boundaries、ledger）由 ChatGPT 以 `catdesk_instruction` 重連後另行驗收；失敗由外部判斷，rollback 由外部明確決定（將前一 accepted versioned artifact 重新簽署/複製回同一 `runtime/bin/catdesk` 路徑）。
+- 不可在 repository、skill、script 輸出或 logs 中記錄任何 secret slug、token 或 tunnel credential。
+
+Canonical controller 產物：`scripts/activate-stable-runtime.sh`（預設 `--preflight`，需顯式 `--activate`）。遠端脫離所需的 ephemeral bootstrap 流程記載於此與 `skills/catdesk-release-update/SKILL.md`，不產生 daemon/service。
+
+遠端 activation 的 ephemeral bootstrap（當 controller 必須比 CatDesk 活得更久時）：
+
+```bash
+# 1. 已有無害 run=1 probe 證實此 pattern 的語意 — 不要用 launchctl submit。
+# 2. 建受限 staging：umask 077; mkdir -p ~/.catdesk/activation（0700）
+# 3. 寫 plist 到 ~/.catdesk/activation/com.hong.catdesk.activate.<timestamp>.plist（0600）：
+#    Label=com.hong.catdesk.activate.<timestamp>，ProgramArguments=[/path/to/scripts/activate-stable-runtime.sh --activate]，
+#    RunAtLoad=true，KeepAlive=false，無 StartInterval/WatchPaths/StartCalendarInterval
+# 4. 動態解析 domain：gui/<uid> 若 launchctl print gui/<uid>/com.hong.catdesk 成功否則 user/<uid>
+# 5. launchctl bootstrap <domain> <plist>（unique label，僅跑一次）
+# 6. 重連後 ChatGPT 驗 replacement + 30 秒穩定 + nc -z 127.0.0.1 3200，再做 MCP/Cloudflare acceptance
+# 7. 清理：launchctl bootout <domain>/<label>（或 bootout <domain> <plist>）；controller 永不自行 bootout/重啟
+```
+
+## Acceptance checklist
+
+能編譯不代表升級成功。至少必須確認：
+
+- formatting pass；
+- upstream test suite pass；
+- workspace read/write/edit/delete/search pass；
+- 明確允許的 external read pass；
+- 明確允許的 external write/edit/delete pass；
+- read-only external root 無法寫入；
+- traversal / symlink escape 被拒絕；
+- canonical/external target 的 change tracking 正確；
+- 新 release 的 API/schema/runtime behavior 正常；
+- launchd active child 指向正確的 production binary — **canonical / current production（Phase B — PRODUCTION_ACCEPTED）：** 必須是實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（launcher 唯一目標；版本化產物僅為 provenance/rollback source，不得作 launcher target）；
+- CatDesk 沒有 crash loop；
+- `/Volumes/ExpansionDrive` write/read/delete acceptance pass；
+- Cloudflare tunnel continuity 不受影響；
+- 所有測試產生的暫存檔都清除。
+
+## Provenance 規則
+
+Upstream 與 downstream artifact identity 必須分開：
+
+- official upstream digest 只代表官方 artifact；
+- custom binary digest 才代表本機 build 的 downstream production artifact；
+- 官方 checksum 成功，不代表官方 binary 已包含本 repo 的 custom contract；
+- 每次正式 production custom build 都要由 accepted downstream Git tag 綁定 source-level provenance。
+
+## 絕對不能 commit 的內容
+
+這個 repo 只保存 source 與 documentation，不保存 production runtime state。
+
+禁止提交：
+
+- API keys、access tokens、cookies、credentials、tunnel secrets、MCP path secrets；
+- `~/.catdesk/config.toml` 或任何包含真實 credential 的 production config；
+- 真實 production launchd plist / launch wrapper；
+- Cloudflare/ngrok credential 或 tunnel config；
+- runtime logs、`~/.catdesk/usage.jsonl`、restart markers、verification output、command job state、generated mascot/state files；
+- `target/`、compiled binaries、`.dSYM`、backup、temporary build output、installed production binary；
+- 把 secrets 複製到 examples、issues、commit messages 或 release notes。
+
+未來若需要文件化 deployment config，只能提供 sanitized example 與 placeholder。
+
+## Git remotes
+
+預期 remote layout：
+
+```text
+origin   -> private downstream repository (HCH725/CatDesk-custom)
+upstream -> official public repository (Xeift/CatDesk)
+```
+
+不要為了跟 upstream 對齊而 force-push `main`。Upstream 更新一律視為一次新的、需要 review 的 downstream release update。
+
+## Build 與 test
+
+使用 upstream Rust toolchain 與 project instructions。不要把任何 upstream 純格式 drift 帶入 downstream。對四個 downstream custom Rust files 做 scoped rustfmt/check；本 candidate 實測（`cargo test`：228 passed、0 failed；`cargo test --release`：228 passed、0 failed）：
+
+```bash
+rustfmt --edition 2024 --check src/change_tracking/mod.rs src/mcp.rs src/state.rs src/workspace_tools.rs
+cargo check
+cargo test
+cargo test --release
+cargo build --release
+```
+
+本 candidate 的 `src/handoff.rs` 與 upstream `v0.7.0` 完全一致（原生 `create_handoff`/Library recovery，無 downstream 客製）。Release-specific 與 downstream boundary tests 是額外要求，不能取代 upstream test suite。
+
+## License 與 upstream attribution
+
+本 downstream repository 保留 upstream MIT License 與原 copyright notice。CatDesk 原始專案由 `xeift.eth` / Xeift 開發：
+
+https://github.com/Xeift/CatDesk
+
+這個 private repository 的目的只是保存漢秦哥 production environment 所需的本機 custom modifications，以及未來每次升級的可追溯歷史。
