@@ -8,6 +8,8 @@ set -eu
 
 STABLE_RUNTIME_DEFAULT="/Users/hong/.local/share/catdesk/runtime/bin/catdesk"
 STABLE_RUNTIME="${CATDESK_STABLE_RUNTIME:-$STABLE_RUNTIME_DEFAULT}"
+STAGED_RUNTIME_DEFAULT="/Users/hong/.local/share/catdesk/runtime-next/bin/catdesk"
+STAGED_RUNTIME="${CATDESK_STAGED_RUNTIME:-$STAGED_RUNTIME_DEFAULT}"
 LAUNCHER="${CATDESK_LAUNCHER:-/Users/hong/.local/share/catdesk/catdesk-launch.tcl}"
 PLIST="${CATDESK_PLIST:-/Users/hong/Library/LaunchAgents/com.hong.catdesk.plist}"
 LOCK_DIR="${CATDESK_ACTIVATION_DIR:-$HOME/.catdesk/activation}"
@@ -15,40 +17,30 @@ LOCK_FILE="$LOCK_DIR/activate.lock"
 EXPECTED_DR='identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"'
 EXPECTED_ID="com.hong.catdesk"
 
-# --- single-flight via lockf re-exec (macOS lockf, not flock) ---
-# Must be BEFORE arg parsing so we can re-exec with original args ($@).
-# Second concurrent instance fails immediately (busy, nonzero) not queue.
-if [ -z "${CATDESK_ACTIVATE_LOCKED:-}" ]; then
-  umask 077
-  mkdir -p "$LOCK_DIR"
-  chmod 700 "$LOCK_DIR" 2>/dev/null || true
-  : > "$LOCK_FILE" 2>/dev/null || touch "$LOCK_FILE"
-  chmod 600 "$LOCK_FILE" 2>/dev/null || true
-  # Preserve original args; default to --preflight if none
-  # Use -k to keep lock file (0700/0600) and guarantee ordering; -t 0 = fail immediately if busy
-  if [ $# -eq 0 ]; then
-    CATDESK_ACTIVATE_LOCKED=1 exec /usr/bin/lockf -k -t 0 "$LOCK_FILE" "$0" --preflight
-  else
-    CATDESK_ACTIVATE_LOCKED=1 exec /usr/bin/lockf -k -t 0 "$LOCK_FILE" "$0" "$@"
-  fi
-fi
-
+# --- arg parsing (side-effect free; --preflight must stay read-only) ---
 MODE=""
-# --- arg parse (now we are already under lock) ---
 while [ $# -gt 0 ]; do
   case "$1" in
     --preflight) MODE="preflight"; shift ;;
     --activate) MODE="activate"; shift ;;
+    --staged)
+      if [ $# -lt 2 ]; then echo "ERR: --staged requires path" >&2; exit 2; fi
+      STAGED_RUNTIME="$2"; shift 2 ;;
+    --staged=*) STAGED_RUNTIME="${1#--staged=}"; shift ;;
     --stable-runtime)
       if [ $# -lt 2 ]; then echo "ERR: --stable-runtime requires path" >&2; exit 2; fi
       STABLE_RUNTIME="$2"; shift 2 ;;
     --stable-runtime=*) STABLE_RUNTIME="${1#--stable-runtime=}"; shift ;;
     -h|--help)
       cat <<HELP
-Usage: $0 [--preflight] [--activate] [--stable-runtime PATH]
-  No flags      -> --preflight only (safe default, no mutation)
-  --preflight   -> read-only gates, no production mutation
+Usage: $0 [--preflight] [--activate] [--staged PATH] [--stable-runtime PATH]
+  No flags      -> --preflight only (safe default, no mutation, no activation state)
+  --preflight   -> read-only gates, no production mutation and no lock/state writes
   --activate    -> lock, preflight, backup, single kickstart, 30s stability + TCP check
+  --staged PATH -> staged artifact whose content identity is compared with the stable
+                   runtime; identical content is a genuine no-op, different content is
+                   promoted atomically (rename) with exactly one kickstart.
+                   Default: $STAGED_RUNTIME_DEFAULT
   --stable-runtime PATH -> override canonical stable runtime (default: $STABLE_RUNTIME_DEFAULT)
 HELP
       exit 0 ;;
@@ -57,7 +49,21 @@ HELP
 done
 if [ -z "$MODE" ]; then MODE="preflight"; fi
 
-# From here we are holding the lock.
+# --- single-flight via lockf re-exec (macOS lockf, not flock) ---
+# Only the mutating path takes the lock: --preflight must not create, touch or
+# truncate any activation state (it is a read-only gate).
+# Second concurrent activation fails immediately (busy, nonzero) not queue.
+if [ "$MODE" = "activate" ] && [ -z "${CATDESK_ACTIVATE_LOCKED:-}" ]; then
+  umask 077
+  mkdir -p "$LOCK_DIR"
+  chmod 700 "$LOCK_DIR" 2>/dev/null || true
+  : > "$LOCK_FILE" 2>/dev/null || touch "$LOCK_FILE"
+  chmod 600 "$LOCK_FILE" 2>/dev/null || true
+  # Args were already parsed (and consumed), so re-exec with the resolved values.
+  # -k keeps lock file (0700/0600); -t 0 = fail immediately if busy.
+  CATDESK_ACTIVATE_LOCKED=1 exec /usr/bin/lockf -k -t 0 "$LOCK_FILE" "$0" \
+    --activate --stable-runtime "$STABLE_RUNTIME" --staged "$STAGED_RUNTIME"
+fi
 
 resolve_domain() {
   _uid=$(id -u)
@@ -188,17 +194,44 @@ do_activate() {
   _domain=$(resolve_domain) || return 1
   echo "domain=$_domain"
 
-  # Snapshot before (wrapper pid + runs)
+  # Snapshot before (wrapper pid + runs + running child pid)
   _before_pid=$(get_wrapper_pid "$_domain" 2>&1 || true)
   _before_runs=$(get_wrapper_runs "$_domain" 2>&1 || true)
-  echo "before pid=$_before_pid runs=$_before_runs"
+  _before_child_pid=""
+  if [ -n "$_before_pid" ] && [ "$_before_pid" != "0" ]; then
+    _before_child_pid=$(get_stable_child_pid "$_before_pid" "$STABLE_RUNTIME" 2>&1 || true)
+  fi
+  echo "before pid=$_before_pid runs=$_before_runs child=${_before_child_pid:-none}"
+
+  # --- content identity decision ---
+  # Path-only idempotency is not content identity: the same stable path can hold
+  # different bytes (a version upgrade). Compare the staged artifact digest with
+  # the current stable runtime digest and promote atomically when they differ.
+  _content_upgrade=0
+  _staged_sha=""
+  if [ -n "${STAGED_RUNTIME:-}" ] && [ -f "$STAGED_RUNTIME" ]; then
+    _staged_sha=$(shasum -a 256 "$STAGED_RUNTIME" 2>/dev/null | awk '{print $1}')
+    _stable_sha_now=$(shasum -a 256 "$STABLE_RUNTIME" 2>/dev/null | awk '{print $1}')
+    echo "staged=$STAGED_RUNTIME sha256=$_staged_sha"
+    echo "stable=$STABLE_RUNTIME sha256=$_stable_sha_now"
+    if [ "$_staged_sha" != "$_stable_sha_now" ]; then
+      _content_upgrade=1
+      echo "content upgrade intent: staged bytes differ from the stable runtime"
+    else
+      echo "staged content identical to the stable runtime — no-op candidate"
+    fi
+  else
+    echo "NOTE: no staged artifact found at ${STAGED_RUNTIME:-unset}; idempotency is path-only for this run"
+  fi
 
   # --- idempotency safety belt (must be before any launcher mutation/kickstart) ---
   # ponytail: idempotency check — launcher precisely stable AND child precisely stable => no kickstart
   # Test hook: CATDESK_TEST_FORCE_ALREADY_ACTIVE=1 forces this branch without touching production launcer
   _idempotent_launcher=0
   _idempotent_child=0
-  if [ "${CATDESK_TEST_FORCE_ALREADY_ACTIVE:-}" = "1" ]; then
+  if [ "$_content_upgrade" -eq 1 ]; then
+    echo "check: content upgrade requested — path-only idempotency does not apply"
+  elif [ "${CATDESK_TEST_FORCE_ALREADY_ACTIVE:-}" = "1" ]; then
     echo "TEST_HOOK: forcing already-active branch (CATDESK_TEST_FORCE_ALREADY_ACTIVE=1)"
     _idempotent_launcher=1
     _idempotent_child=1
@@ -272,12 +305,21 @@ do_activate() {
   chmod 700 "$BACKUP_DIR"
   cp -p "$LAUNCHER" "$BACKUP_DIR/catdesk-launch.tcl.bak" 2>&1 || { echo "FAIL: backup launcher" >&2; return 1; }
   cp -p "$PLIST" "$BACKUP_DIR/com.hong.catdesk.plist.bak" 2>&1 || { echo "FAIL: backup plist" >&2; return 1; }
+  cp -p "$STABLE_RUNTIME" "$BACKUP_DIR/runtime.catdesk.bak" 2>&1 || { echo "FAIL: backup runtime binary" >&2; return 1; }
+  {
+    echo "Rollback (fast, local): cp -p \"$BACKUP_DIR/runtime.catdesk.bak\" \"$STABLE_RUNTIME\" then kickstart only com.hong.catdesk."
+    echo "Rollback (canonical): re-sign the previous accepted versioned artifact as com.hong.catdesk, atomically replace $STABLE_RUNTIME, then kickstart only com.hong.catdesk."
+    echo "Rollback source (previous accepted artifact): ${CATDESK_ROLLBACK_SOURCE:-<record the previous accepted versioned artifact here>}"
+    echo "Do not modify Cloudflare or TCC."
+  } > "$BACKUP_DIR/ROLLBACK.txt"
   # save metadata
   {
     echo "timestamp=$_ts"
     echo "stable_runtime=$STABLE_RUNTIME"
+    echo "staged_runtime=${STAGED_RUNTIME:-none} staged_sha256=${_staged_sha:-none}"
+    echo "content_upgrade=$_content_upgrade"
     echo "domain=$_domain"
-    echo "before_pid=$_before_pid before_runs=$_before_runs"
+    echo "before_pid=$_before_pid before_runs=$_before_runs before_child=${_before_child_pid:-none}"
     shasum -a 256 "$STABLE_RUNTIME" 2>&1 || true
     codesign -dv --verbose=4 "$STABLE_RUNTIME" 2>&1 || true
     codesign -d -r - "$STABLE_RUNTIME" 2>&1 || true
@@ -286,6 +328,54 @@ do_activate() {
   } > "$BACKUP_DIR/meta.txt"
   chmod 600 "$BACKUP_DIR"/* 2>&1 || true
   echo "OK: backup at $BACKUP_DIR"
+
+  # --- content upgrade promotion (atomic rename; the single kickstart follows below) ---
+  if [ "$_content_upgrade" -eq 1 ]; then
+    echo "== promote staged artifact =="
+    if [ ! -f "$STAGED_RUNTIME" ]; then echo "FAIL: staged artifact disappeared: $STAGED_RUNTIME" >&2; return 1; fi
+    if [ -L "$STAGED_RUNTIME" ]; then echo "FAIL: staged artifact must be a physical file" >&2; return 1; fi
+    if ! codesign --verify --strict --verbose=4 "$STAGED_RUNTIME" 2>&1; then
+      echo "FAIL: staged codesign --verify --strict failed (no mutation performed)" >&2
+      return 1
+    fi
+    _staged_dv=$(codesign -dv --verbose=4 "$STAGED_RUNTIME" 2>&1 || true)
+    echo "$_staged_dv" | grep -q "Identifier=$EXPECTED_ID" || {
+      echo "FAIL: staged Identifier mismatch (no mutation performed)" >&2
+      return 1
+    }
+    _staged_dr=$(codesign -d -r - "$STAGED_RUNTIME" 2>&1 || true)
+    echo "$_staged_dr" | grep -qF "$EXPECTED_DR" || {
+      echo "FAIL: staged DR mismatch (no mutation performed)" >&2
+      return 1
+    }
+    # Same-filesystem temp + digest check, then atomic rename: a running process keeps
+    # its old inode, so an in-place overwrite of the live binary is never used.
+    _tmp_new="$(dirname "$STABLE_RUNTIME")/.catdesk-runtime.tmp.$$"
+    cp -p "$STAGED_RUNTIME" "$_tmp_new" 2>&1 || { echo "FAIL: staging temp copy" >&2; return 1; }
+    _tmp_sha=$(shasum -a 256 "$_tmp_new" 2>/dev/null | awk '{print $1}')
+    if [ "$_tmp_sha" != "$_staged_sha" ]; then
+      echo "FAIL: staged temp digest mismatch ($_tmp_sha != $_staged_sha)" >&2
+      rm -f "$_tmp_new" 2>/dev/null || true
+      return 1
+    fi
+    if ! mv -f "$_tmp_new" "$STABLE_RUNTIME" 2>&1; then
+      echo "FAIL: atomic rename into $STABLE_RUNTIME failed" >&2
+      rm -f "$_tmp_new" 2>/dev/null || true
+      return 1
+    fi
+    _post_sha=$(shasum -a 256 "$STABLE_RUNTIME" 2>/dev/null | awk '{print $1}')
+    if [ "$_post_sha" != "$_staged_sha" ]; then
+      echo "FAIL: post-swap digest mismatch ($_post_sha != $_staged_sha)" >&2
+      return 1
+    fi
+    if ! codesign --verify --strict --verbose=4 "$STABLE_RUNTIME" 2>&1; then
+      echo "FAIL: post-swap codesign verification failed" >&2
+      return 1
+    fi
+    _post_dr=$(codesign -d -r - "$STABLE_RUNTIME" 2>&1 || true)
+    echo "$_post_dr" | grep -qF "$EXPECTED_DR" || { echo "FAIL: post-swap DR mismatch" >&2; return 1; }
+    echo "OK: stable runtime atomically replaced (sha256=$_staged_sha)"
+  fi
 
   # Only modify launcher spawn target to canonical stable runtime — atomic replace
   if ! is_launcher_stable "$STABLE_RUNTIME" "$LAUNCHER"; then
@@ -354,6 +444,13 @@ do_activate() {
   if [ -z "$_found_stable" ]; then
     echo "FAIL: replacement verification — no stable child with PPID=$_post_wrapper_pid and exe=$STABLE_RUNTIME" >&2
     ps -axo pid=,ppid=,command= 2>&1 | grep -F catdesk | grep -v grep >&2 || true
+    echo "HINT: backup at $BACKUP_DIR ; no second kickstart, no auto-rollback" >&2
+    return 1
+  fi
+  # Content upgrades must prove a *new* process: an unchanged child PID means the
+  # promoted bytes were never loaded.
+  if [ "$_content_upgrade" -eq 1 ] && [ -n "$_before_child_pid" ] && [ "$_found_stable" = "$_before_child_pid" ]; then
+    echo "FAIL: replacement child PID is unchanged ($_found_stable) — promoted content is not proven to be running" >&2
     echo "HINT: backup at $BACKUP_DIR ; no second kickstart, no auto-rollback" >&2
     return 1
   fi
