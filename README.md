@@ -12,15 +12,24 @@
 
 - **Upstream project:** https://github.com/Xeift/CatDesk
 - **Upstream source of truth:** official stable tags from `Xeift/CatDesk`
-- **Current upstream baseline:** `v0.7.0`
-- **Current upstream commit:** `cc5daf850cfa5bcd6cae8e414b9009eeeba0a6d8`
+- **Accepted production baseline (currently deployed):** `v0.7.0`
+- **Accepted upstream commit:** `cc5daf850cfa5bcd6cae8e414b9009eeeba0a6d8`
 - **Downstream release naming:** `vX.Y.Z-custom.N`
 - **Accepted downstream release:** `v0.7.0-custom.1` (**PRODUCTION_ACCEPTED**, source-level provenance commit `16fc4e3b8a5f5638408c93d5d4e28b49f4829faf`)
-- **Official upstream macOS arm64 artifact SHA256:** `81f6ce46f7e8170c4240c7b5d777f5efc3ec6f5f803620164cc25af22d5012cd`
-- **Downstream versioned arm64 artifact SHA256:** `33593e1c33818dacabc6fee8a90923cec5e4376d974807d9c416a7a677ab006d`
+- **Official upstream macOS arm64 artifact SHA256 (v0.7.0):** `81f6ce46f7e8170c4240c7b5d777f5efc3ec6f5f803620164cc25af22d5012cd`
+- **Downstream versioned arm64 artifact SHA256 (v0.7.0-custom.1):** `33593e1c33818dacabc6fee8a90923cec5e4376d974807d9c416a7a677ab006d`
 - **Current production runtime:** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (stable-signed SHA256 `ab7a76b5d36a703b94ca24413178dfa316e15b980865f398f0d0c46b6d8eb309`)
 - **Previous accepted rollback release:** `v0.5.0-custom.3` (retained as rollback source)
 - **Production source of truth:** this private repository after a downstream release has passed acceptance and audit
+
+### Candidate — `v0.9.0-custom.1` (pending production acceptance; not accepted, no rollout)
+
+- **Candidate upstream baseline:** `v0.9.0` — tag object `2f6037e479bd7467d6f60dc56e0e114186a03be8`, commit `37197b9f9530baa6634e32365be99ca78d9373cc` (`== upstream/main` at port time)
+- **Official upstream macOS arm64 artifact SHA256 (v0.9.0):** `4d95fca3945978b78afd45ca13bf7c6aad0dddf334c5338b54e530b7fbcacf06`
+- **Candidate branch:** `upgrade/v0.9.0` — promotion requires an independent pre-activation audit of the exact frozen revision plus post-activation ChatGPT acceptance.
+- **Candidate custom source scope:** `src/mcp.rs`, `src/state.rs`, `src/workspace_tools.rs` (3 upstream source files). `src/change_tracking/mod.rs` is **upstream-identical**: upstream `v0.8.0` `normalize_scope_paths` plus the downstream canonicalizing resolvers absorb the previous 7-line target-canonicalize custom, and the downstream boundary test `external_root_targets_keep_accurate_before_after_tracking` locks contract §3.
+- **Candidate verification (measured):** scoped `rustfmt --edition 2024 --check` pass; `cargo check --all-targets` pass; `cargo test` 239 passed / 0 failed; `cargo test --release` 239 passed / 0 failed (audited `d7261fa` snapshot: 238 passed / 0 failed); `scripts/tests/activate-controller-regression.sh` PASS (T1–T4).
+- **Candidate rollback source:** previous accepted artifact `~/.local/share/catdesk/0.7.0-custom.1/bin/catdesk` re-signed as `com.hong.catdesk` and atomically replaced into the same `runtime/bin/catdesk` path.
 
 Do **not** replace this repository with a fresh upstream checkout. Future updates must preserve the downstream contract documented below while retaining all relevant upstream release behavior.
 
@@ -68,6 +77,7 @@ Required semantics:
 - `CATDESK_READ_ROOTS` adds explicit locations that may be read.
 - `CATDESK_WRITE_ROOTS` adds explicit locations that may be written, edited, deleted, or used as move targets/sources.
 - **Read permission must never imply write permission.**
+- Write roots must stay readable for change tracking: the change-scope resolver takes the read boundary, so a **write-only** root would mutate without a `ChangeSession` before/after diff. Current production policy keeps every `CATDESK_WRITE_ROOTS` entry readable (`/Volumes/ExpansionDrive` appears in both lists). Adding a write-only root requires extending the change-scope resolver first, with a regression test.
 - Multiple roots must use the operating system's path-list semantics.
 - Do not broaden these roots to the entire home directory or an entire drive unless explicitly approved and tested.
 
@@ -130,6 +140,15 @@ For the current `v0.7.0` baseline, acceptance includes preserving:
 - upstream `v0.7.0` session handoff (`create_handoff`) with workspace-specific identity and ChatGPT Library recovery (native implementation; `src/handoff.rs` carries no downstream customization);
 - upstream Linux sandbox SSH authentication behavior.
 
+For the `v0.9.0-custom.1` candidate baseline, acceptance additionally includes preserving:
+
+- the `widgetCornerStyle` setting end to end (config, widget payload, resource query parameter) at widget resource revision 6;
+- the expanded Traditional Chinese coverage (dashboard, settings, browser selection, ngrok setup, themes, tool modes, runtime logs) while the launcher-critical English strings stay intact (`Select mode`, `Control Computer`, `Control Browser`, `Both`, `RUNNING`, `port 3200`, `Installed browsers`, `Select Browser`);
+- local-time log timestamps (`local_now`, exported log filename offset);
+- upstream `v0.9.0` widget surface revisions;
+- upstream Linux sandbox git-metadata handling (Linux-only; no macOS runtime effect);
+- upstream `v0.9.0` session handoff with `src/handoff.rs` still free of downstream customization.
+
 Release-specific checks must be re-derived from the release notes every time upstream changes.
 
 ## Current custom source scope
@@ -142,6 +161,16 @@ src/mcp.rs
 src/state.rs
 src/workspace_tools.rs
 ```
+
+The `v0.9.0-custom.1` candidate needs only three of them:
+
+```text
+src/mcp.rs
+src/state.rs
+src/workspace_tools.rs
+```
+
+`src/change_tracking/mod.rs` is **upstream-identical** in the candidate: upstream `v0.8.0` absorbed the previous 7-line target-canonicalize custom with `normalize_scope_paths`, and the downstream canonicalizing resolvers keep every target canonical before it reaches `ChangeSession`. Contract §3 is locked by the downstream boundary test `external_root_targets_keep_accurate_before_after_tracking` instead of by a source delta.
 
 This scope is descriptive, not permanent. A future upstream architecture may require fewer, different, or no downstream changes. Preserve the **behavioral contract**, not old file layouts.
 
@@ -369,7 +398,7 @@ Never force-push `main` merely to align it with upstream. Upstream changes are i
 
 ## Build and test
 
-Use the upstream Rust toolchain and project instructions. Do not carry any upstream formatting-only drift downstream. Verify the four downstream custom Rust files with scoped rustfmt/check commands; accepted `v0.7.0-custom.1` measured (`cargo test`: 228 passed, 0 failed; `cargo test --release`: 228 passed, 0 failed):
+Use the upstream Rust toolchain and project instructions. Do not carry any upstream formatting-only drift downstream. Verify the downstream custom Rust files with scoped rustfmt/check commands; accepted `v0.7.0-custom.1` measured (`cargo test`: 228 passed, 0 failed; `cargo test --release`: 228 passed, 0 failed), and the `v0.9.0-custom.1` candidate measured **239 passed / 0 failed** in both profiles (`change_tracking` is upstream-identical in the candidate and is still checked for drift):
 
 ```bash
 rustfmt --edition 2024 --check src/change_tracking/mod.rs src/mcp.rs src/state.rs src/workspace_tools.rs
@@ -377,9 +406,12 @@ cargo check
 cargo test
 cargo test --release
 cargo build --release
+sh scripts/tests/activate-controller-regression.sh
 ```
 
-Accepted `v0.7.0-custom.1` keeps `src/handoff.rs` identical to upstream `v0.7.0` (native `create_handoff`/Library recovery, no downstream customization). Release-specific and downstream boundary tests are additional requirements, not substitutes for the upstream suite.
+The activation-controller regression harness (`scripts/tests/activate-controller-regression.sh`) locks the audit-fixed controller behaviour: `--preflight` creates no activation state, changed bytes at the same stable path promote atomically with exactly one kickstart, identical bytes stay a no-op, and a missing staged artifact falls back with an explicit notice.
+
+Accepted `v0.7.0-custom.1` keeps `src/handoff.rs` identical to upstream `v0.7.0`, and the `v0.9.0-custom.1` candidate keeps it identical to upstream `v0.9.0` (native `create_handoff`/Library recovery, no downstream customization). Release-specific and downstream boundary tests are additional requirements, not substitutes for the upstream suite.
 
 ## License and upstream attribution
 

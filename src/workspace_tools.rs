@@ -243,16 +243,24 @@ fn canonicalize_for_boundary(path: &Path) -> Result<PathBuf, String> {
     if let Ok(canonical) = path.canonicalize() {
         return Ok(command::normalize_windows_verbatim_path(canonical));
     }
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| format!("Path cannot be resolved: {}", path.display()))?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("Path cannot be resolved: {}", path.display()))?
-        .canonicalize()
-        .map(command::normalize_windows_verbatim_path)
-        .map_err(|e| format!("{e}: {}", path.display()))?;
-    Ok(parent.join(file_name))
+    // Downstream contract §2: a not-yet-existing path is validated against the
+    // canonical form of its nearest existing ancestor, with the missing suffix
+    // re-attached afterwards. Looking only at the immediate parent rejects
+    // nested creates such as `<external-root>/new/deep/file.txt`.
+    let mut missing = Vec::new();
+    let mut candidate = path;
+    while let (Some(file_name), Some(parent)) = (candidate.file_name(), candidate.parent()) {
+        missing.push(file_name.to_os_string());
+        if let Ok(canonical) = parent.canonicalize() {
+            let mut resolved = command::normalize_windows_verbatim_path(canonical);
+            for component in missing.iter().rev() {
+                resolved.push(component.as_os_str());
+            }
+            return Ok(resolved);
+        }
+        candidate = parent;
+    }
+    Err(format!("Path cannot be resolved: {}", path.display()))
 }
 
 fn configured_roots(variable: &str, alias: &str) -> Vec<PathBuf> {
@@ -1924,6 +1932,89 @@ mod tests {
         assert!(resolve_under_roots(&workspace_str, "notes.txt", &write_roots, "write").is_ok());
 
         assert!(blocked_root.starts_with("/"));
+        let _ = fs::remove_dir_all(workspace);
+        let _ = fs::remove_dir_all(external);
+        let _ = fs::remove_dir_all(blocked);
+    }
+
+    #[test]
+    fn external_root_targets_keep_accurate_before_after_tracking() {
+        use crate::change_tracking::{ChangeScope, ChangeSession, ChangeTarget};
+
+        // Downstream contract §3: change tracking must stay accurate for targets
+        // in explicitly allowed external roots. The MCP layer canonicalizes those
+        // targets (resolve_write_path_from_cwd / resolve_read_path) before they
+        // enter change tracking; the session must report the external change.
+        let workspace = test_workspace("tracking-workspace");
+        let external = test_workspace("tracking-external");
+        fs::create_dir_all(&workspace).expect("workspace");
+        fs::create_dir_all(&external).expect("external");
+        let external_root = external.canonicalize().expect("canonical external");
+        let target = external_root.join("artifact.txt");
+        fs::write(&target, "before\n").expect("fixture");
+
+        let session = ChangeSession::begin(
+            &workspace,
+            ChangeScope::single(ChangeTarget::explicit(target.clone(), false)),
+        );
+        fs::write(&target, "after\n").expect("change external target");
+
+        let changes = session.changes();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path, target.display().to_string());
+        assert_eq!(changes[0].added, 1);
+        assert_eq!(changes[0].removed, 1);
+
+        let _ = fs::remove_dir_all(workspace);
+        let _ = fs::remove_dir_all(external);
+    }
+
+    #[test]
+    fn nested_missing_external_paths_resolve_via_nearest_existing_ancestor() {
+        let workspace = test_workspace("nested-workspace");
+        let external = test_workspace("nested-external");
+        let blocked = test_workspace("nested-blocked");
+        fs::create_dir_all(&workspace).expect("workspace");
+        fs::create_dir_all(&external).expect("external");
+        fs::create_dir_all(&blocked).expect("blocked");
+        let workspace_root = workspace.canonicalize().expect("canonical workspace");
+        let external_root = external.canonicalize().expect("canonical external");
+        let write_roots = vec![workspace_root.clone(), external_root.clone()];
+        let workspace_str = workspace.to_string_lossy();
+
+        // Contract §2: nested missing paths canonicalize the nearest existing parent.
+        let resolved = resolve_under_roots(
+            &workspace_str,
+            external.join("new/deep/file.txt").to_str().unwrap(),
+            &write_roots,
+            "write",
+        )
+        .expect("nested missing external parent must resolve");
+        assert_eq!(resolved, external_root.join("new/deep/file.txt"));
+
+        // Escapes through missing nested paths stay rejected.
+        assert!(
+            resolve_under_roots(
+                &workspace_str,
+                blocked.join("new/deep/file.txt").to_str().unwrap(),
+                &write_roots,
+                "write"
+            )
+            .is_err()
+        );
+        assert!(
+            resolve_under_roots(
+                &workspace_str,
+                external
+                    .join("../nested-blocked/secret.txt")
+                    .to_str()
+                    .unwrap(),
+                &write_roots,
+                "write"
+            )
+            .is_err()
+        );
+
         let _ = fs::remove_dir_all(workspace);
         let _ = fs::remove_dir_all(external);
         let _ = fs::remove_dir_all(blocked);

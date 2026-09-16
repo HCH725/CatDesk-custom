@@ -12,15 +12,24 @@
 
 - **官方 upstream：** https://github.com/Xeift/CatDesk
 - **Upstream source of truth：** `Xeift/CatDesk` 官方 stable tag
-- **目前 upstream baseline：** `v0.7.0`
-- **目前 upstream commit：** `cc5daf850cfa5bcd6cae8e414b9009eeeba0a6d8`
+- **已接受的 production baseline（目前部署中）：** `v0.7.0`
+- **已接受的 upstream commit：** `cc5daf850cfa5bcd6cae8e414b9009eeeba0a6d8`
 - **Downstream 版本命名：** `vX.Y.Z-custom.N`
 - **已接受 downstream release：** `v0.7.0-custom.1`（**PRODUCTION_ACCEPTED**，source-level provenance commit `16fc4e3b8a5f5638408c93d5d4e28b49f4829faf`）
-- **官方 upstream macOS arm64 artifact SHA256：** `81f6ce46f7e8170c4240c7b5d777f5efc3ec6f5f803620164cc25af22d5012cd`
-- **Downstream versioned arm64 artifact SHA256：** `33593e1c33818dacabc6fee8a90923cec5e4376d974807d9c416a7a677ab006d`
+- **官方 upstream macOS arm64 artifact SHA256（v0.7.0）：** `81f6ce46f7e8170c4240c7b5d777f5efc3ec6f5f803620164cc25af22d5012cd`
+- **Downstream versioned arm64 artifact SHA256（v0.7.0-custom.1）：** `33593e1c33818dacabc6fee8a90923cec5e4376d974807d9c416a7a677ab006d`
 - **目前 production runtime：** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（stable-signed SHA256 `ab7a76b5d36a703b94ca24413178dfa316e15b980865f398f0d0c46b6d8eb309`）
 - **前一個 accepted rollback release：** `v0.5.0-custom.3`（保留作 rollback source）
 - **Production source of truth：** 通過驗收與 audit 後的這個 private repository
+
+### 候選版 — `v0.9.0-custom.1`（待 production 驗收；尚未接受、未 rollout）
+
+- **候選 upstream baseline：** `v0.9.0` — tag object `2f6037e479bd7467d6f60dc56e0e114186a03be8`、commit `37197b9f9530baa6634e32365be99ca78d9373cc`（port 當下 `== upstream/main`）
+- **官方 upstream macOS arm64 artifact SHA256（v0.9.0）：** `4d95fca3945978b78afd45ca13bf7c6aad0dddf334c5338b54e530b7fbcacf06`
+- **候選分支：** `upgrade/v0.9.0` — promotion 前必須先對「凍結的精確 revision」完成獨立 pre-activation audit，之後才做 activation 與 ChatGPT 驗收。
+- **候選客製 source scope：** `src/mcp.rs`、`src/state.rs`、`src/workspace_tools.rs`（3 個 upstream source files）。`src/change_tracking/mod.rs` 與 upstream **完全相同**：上游 `v0.8.0` 的 `normalize_scope_paths` 加上 downstream canonicalizing resolver 已吸收舊的 7 行 target-canonicalize 客製；契約 §3 改由 downstream 邊界測試 `external_root_targets_keep_accurate_before_after_tracking` 鎖住。
+- **候選驗證（實測）：** scoped `rustfmt --edition 2024 --check` 通過；`cargo check --all-targets` 通過；`cargo test` 239 passed / 0 failed；`cargo test --release` 239 passed / 0 failed（已審計的 `d7261fa` snapshot：238 passed / 0 failed）；`scripts/tests/activate-controller-regression.sh` PASS（T1–T4）。
+- **候選 rollback source：** 前一個 accepted artifact `~/.local/share/catdesk/0.7.0-custom.1/bin/catdesk`，以 `com.hong.catdesk` 重簽後原子替換回同一條 `runtime/bin/catdesk` 路徑。
 
 未來更新時，**不能用乾淨 upstream checkout 直接取代本 repo**。新版必須保留下方記載的 downstream contract，同時保留新 upstream release 的功能。
 
@@ -68,6 +77,7 @@ CATDESK_WRITE_ROOTS=/Volumes/ExpansionDrive
 - `CATDESK_READ_ROOTS` 只增加可讀取位置。
 - `CATDESK_WRITE_ROOTS` 才增加可寫入、編輯、刪除，以及 move source / destination 的位置。
 - **可讀絕對不能自動等於可寫。**
+- write root 也必須保持可讀（change tracking）：change-scope resolver 走的是 read boundary，若 root 是 **write-only**，mutation 會成功但 `ChangeSession` 不會產生 before/after diff。目前 production policy 的每一個 `CATDESK_WRITE_ROOTS` 都同時可讀（`/Volumes/ExpansionDrive` 同時在兩個清單）。未來若要新增 write-only root，必須先擴充 change-scope resolver 並補上回歸測試。
 - 多個 root 必須遵循作業系統 path-list semantics。
 - 未經明確批准與測試，不得把權限粗暴擴大成整個 home 或整顆磁碟。
 
@@ -130,6 +140,15 @@ Downstream port 不能為了保留舊 custom 而把新版 upstream 功能洗掉�
 - upstream `v0.7.0` session handoff（`create_handoff`）含 workspace-specific identity 與 ChatGPT Library recovery（原生實作，`src/handoff.rs` 無 downstream 客製）；
 - upstream Linux sandbox SSH authentication 行為。
 
+`v0.9.0-custom.1` 候選版 baseline 另外至少要保留：
+
+- `widgetCornerStyle` 設定的完整鏈路（config → widget payload → resource query parameter），widget resource revision 6；
+- 擴充後的繁中覆蓋（dashboard、settings、browser selection、ngrok setup、themes、tool modes、runtime logs），同時 launcher 依賴的英文字串必須保持（`Select mode`、`Control Computer`、`Control Browser`、`Both`、`RUNNING`、`port 3200`、`Installed browsers`、`Select Browser`）；
+- local-time log 時間戳（`local_now`、exported log filename offset）；
+- upstream `v0.9.0` 的 widget surface 修訂；
+- upstream Linux sandbox git-metadata 行為（Linux-only，對 macOS runtime 無影響）；
+- upstream `v0.9.0` session handoff，且 `src/handoff.rs` 仍無 downstream 客製。
+
 每次新 upstream release 都必須重新閱讀 release notes，動態產生 release-specific smoke checks。
 
 ## 目前 custom source scope
@@ -143,7 +162,17 @@ src/state.rs
 src/workspace_tools.rs
 ```
 
-這四個檔名不是永久規則。未來 upstream 架構可能改變，屆時可能需要更少、不同，甚至零個修改。要保存的是 **behavioral contract**，不是舊版檔案配置。
+`v0.9.0-custom.1` 候選版只需要其中三個：
+
+```text
+src/mcp.rs
+src/state.rs
+src/workspace_tools.rs
+```
+
+候選版的 `src/change_tracking/mod.rs` 與 upstream **完全相同**：上游 `v0.8.0` 以 `normalize_scope_paths` 吸收了先前 7 行的 target-canonicalize 客製，而 downstream canonicalizing resolver 已確保所有進入 `ChangeSession` 的 target 都是 canonical。契約 §3 因此改由 downstream 邊界測試 `external_root_targets_keep_accurate_before_after_tracking` 鎖住，而不是靠原始碼 delta。
+
+這些檔名不是永久規則。未來 upstream 架構可能改變，屆時可能需要更少、不同，甚至零個修改。要保存的是 **behavioral contract**，不是舊版檔案配置。
 
 ## 穩定 macOS runtime 身份與部署契約（Phase B — PRODUCTION_ACCEPTED）
 
@@ -367,7 +396,7 @@ upstream -> official public repository (Xeift/CatDesk)
 
 ## Build 與 test
 
-使用 upstream Rust toolchain 與 project instructions。不要把任何 upstream 純格式 drift 帶入 downstream。對四個 downstream custom Rust files 做 scoped rustfmt/check；已接受的 `v0.7.0-custom.1` 實測（`cargo test`：228 passed、0 failed；`cargo test --release`：228 passed、0 failed）：
+使用 upstream Rust toolchain 與 project instructions。不要把任何 upstream 純格式 drift 帶入 downstream。對 downstream custom Rust files 做 scoped rustfmt/check；已接受的 `v0.7.0-custom.1` 實測（`cargo test`：228 passed、0 failed；`cargo test --release`：228 passed、0 failed），`v0.9.0-custom.1` 候選版實測 **239 passed / 0 failed**（debug 與 release 相同；候選版的 `change_tracking` 與 upstream 相同，仍會做 drift 檢查）：
 
 ```bash
 rustfmt --edition 2024 --check src/change_tracking/mod.rs src/mcp.rs src/state.rs src/workspace_tools.rs
@@ -375,9 +404,12 @@ cargo check
 cargo test
 cargo test --release
 cargo build --release
+sh scripts/tests/activate-controller-regression.sh
 ```
 
-已接受的 `v0.7.0-custom.1` 之 `src/handoff.rs` 與 upstream `v0.7.0` 完全一致（原生 `create_handoff`/Library recovery，無 downstream 客製）。Release-specific 與 downstream boundary tests 是額外要求，不能取代 upstream test suite。
+activation controller 回歸 harness（`scripts/tests/activate-controller-regression.sh`）鎖住 audit 修復後的行為：`--preflight` 不建立任何 activation state；同一 stable path 換內容時走原子替換並恰好 kickstart 一次；內容相同時維持 no-op；沒有 staged artifact 時以明確 notice 退回 path-only。
+
+已接受的 `v0.7.0-custom.1` 之 `src/handoff.rs` 與 upstream `v0.7.0` 完全一致；`v0.9.0-custom.1` 候選版則與 upstream `v0.9.0` 完全一致（原生 `create_handoff`/Library recovery，無 downstream 客製）。Release-specific 與 downstream boundary tests 是額外要求，不能取代 upstream test suite。
 
 ## License 與 upstream attribution
 
