@@ -25,6 +25,7 @@
 ### 已接受版本記錄 — `v0.9.0-custom.1`（2026-09-17）
 
 - **Baseline：** upstream `v0.9.0`（tag object `2f6037e479bd7467d6f60dc56e0e114186a03be8`、commit `37197b9f9530baa6634e32365be99ca78d9373cc`）；凍結候選 `d1ce2948e8230f0ec7f843cdfb1522e3e44d59a1`，以 `495893e` merge 進 main。
+- **History note：** sibling commit `266f107`（升級期間由 agent 側寫入 `skills/catdesk-release-update/SKILL.md` 的 standing rules）經 owner 決定**刻意保留**。它造成了 pre-audit 的 revision drift，已由重新凍結至 `d1ce294` 解決；其內容通過機密掃描與獨立 re-audit，並保留在本版歷史中。
 - **獨立審計：** pre-activation audit FAIL（卡 `t_dc033b89`）→ remediation commit `d1ce294` → re-audit **PASS**（`t_03492b4d`：F1–F7 全過、239 debug/release 測試、activation harness T1–T4、機密掃描全 0、審計期間生產零變更）。
 - **激活（2026-09-17 06:25:55）：** 走內容識別升級路徑（未誤判 `ALREADY_ACTIVE`）、原子 rename 替換、恰好一次 `kickstart -k`、子進程 PID 更換（`1002` → `51977`）、30 秒 triple stability、`nc -z 127.0.0.1 3200` PASS；launcher/plist hash 未變；Cloudflare 未動；備份 `~/.catdesk/activation/backups/20260917-062555-51896`。
 - **激活後驗收（重連 ChatGPT）：** PASS — MCP discover/command/search/write/delete、workspace 與 ExpansionDrive CRUD、write-root 與 read-root 外拒絕、usage ledger 連續性（16374 → 16512 行，`eventId`/`timestampMs` schema 穩定）、Cloudflare 連續性。
