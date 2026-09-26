@@ -203,7 +203,7 @@ Rules:
 
 - `runtime/bin/catdesk` MUST be a **physical file**, never a symlink. All checks (`test -L`, `codesign -dv`, `shasum -a 256`) run against the file itself.
 - Rollback is **previous accepted artifact re-signed and copied** to the **same** `runtime/bin/catdesk` path. No versioned path is ever re-introduced as a launcher target after `runtime` is adopted.
-- Staging validation uses `~/.local/share/catdesk/runtime-next/bin/catdesk` (physical copy + sign + verify) before promotion to `runtime/bin`. Do not modify `runtime/bin` or the launcher until the staged file passes all gates and independent audit.
+- Only after the explicit production deployment/activation approval in the required update workflow may staging create or update `~/.local/share/catdesk/runtime-next/bin/catdesk` (physical copy + sign + verify) before promotion to `runtime/bin`. Do not modify `runtime/bin` or the launcher until the staged file passes all gates and independent audit.
 - `runtime/` and `runtime-next/` are production runtime state and MUST never be committed.
 
 > **Canonical / current production (Phase B — PRODUCTION_ACCEPTED):** the launcher's **sole** target is the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (signed `Identifier=com.hong.catdesk`, `DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`). Versioned artifacts `~/.local/share/catdesk/<version>-custom/bin/catdesk` remain **provenance/rollback source only** and MUST never be used as a launcher target. Historical note: before Phase B activation the running child was temporarily `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk` (versioned path, ad-hoc `CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`, `Identifier=catdesk-e6cd98f31dbf91fd`) — that state is retired and MUST NOT be read as current production.
@@ -231,13 +231,13 @@ Two different binaries signed with this identity were independently verified to 
 - **B (0.5.0-custom.3 content) signed:** `SHA256=7e840ab9fc32f38adfa4fb187f92833c24c68fba4881410530053007d83023ac`, `CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`, `Identifier=com.hong.catdesk`, `Authority=CatDesk Local Code Signing`
 - **Both:** `Designated Requirement = identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"` and `codesign --verify --strict --verbose=4` = `valid on disk` + `satisfies its Designated Requirement`.
 
-This proves that a stable certificate + stable identifier yields a **stable DR** that survives binary content changes, which is the TCC-persistence requirement. Every accepted release staged to `runtime-next/bin/catdesk` must exhibit the same DR and `Identifier=com.hong.catdesk`; content-specific CDHash/SHA256 values are expected to change and must be recorded per release.
+This proves that a stable certificate + stable identifier yields a **stable DR** that survives binary content changes, which is the TCC-persistence requirement. For each production deployment, only after explicit deployment/activation approval, the accepted release staged to `runtime-next/bin/catdesk` must exhibit the same DR and `Identifier=com.hong.catdesk`; content-specific CDHash/SHA256 values are expected to change and must be recorded per release.
 
 ### Verification gate (do not rely on `find-identity` text)
 
 `security find-identity -v -p codesigning` may display `CSSMERR_TP_NOT_TRUSTED` for this local self-signed certificate. That warning is **informational only** and is **NOT a blocker** — empirical `codesign --verify --strict` and DR satisfaction are the gate.
 
-Every deploy/stage operation MUST gate on:
+After the explicit production deployment/activation approval required by the update workflow, every deploy/stage operation MUST gate on:
 
 ```bash
 codesign --verify --strict --verbose=4 /Users/hong/.local/share/catdesk/runtime-next/bin/catdesk  # or runtime/bin/catdesk
@@ -340,9 +340,11 @@ Ephemeral bootstrap for remote activation (when the controller must outlive CatD
 
 ## Acceptance checklist
 
-A downstream release is not accepted merely because it compiles.
+A downstream release is not accepted merely because it compiles. Acceptance has two separate phases.
 
-At minimum, verify:
+### Phase A — Source acceptance (before the accepted downstream tag)
+
+Run these checks against the frozen candidate commit. This phase is source-only: do not write an installed artifact, `runtime-next`, the stable runtime, launcher/plist, launchd state, or production config, and do not require live production probes.
 
 - formatting passes;
 - upstream test suite passes;
@@ -352,12 +354,22 @@ At minimum, verify:
 - a read-only external root cannot be written;
 - traversal and symlink escape attempts are rejected;
 - change tracking remains correct for canonical/external targets;
-- release-specific upstream API/schema/runtime behavior passes;
-- the active launchd child points to the intended production binary — **canonical / current production (Phase B — PRODUCTION_ACCEPTED):** MUST be the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (launcher's sole target; versioned artifacts are provenance/rollback source only, never a launcher target);
+- release-specific upstream API/schema/runtime behavior passes in isolated, non-production validation;
+- all source-test temporary artifacts are removed.
+
+Only after Phase A checks and the independent audit pass may the exact audited commit be merged and tagged as described in the required update workflow.
+
+### Phase B — Production acceptance (after explicit deployment approval and activation)
+
+Do not begin this phase until the source-accepted tag exists and Hanqin-ge has explicitly approved production deployment/activation. Verify the staged signature/identity gates before promotion, then verify:
+
+- the active launchd child points to the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (the launcher's sole target; versioned artifacts are provenance/rollback source only, never a launcher target);
 - CatDesk does not enter a crash loop;
 - `/Volumes/ExpansionDrive` write/read/delete acceptance passes;
 - Cloudflare tunnel continuity is unchanged;
-- all temporary test artifacts are removed.
+- all post-activation acceptance checks in the required update workflow pass.
+
+Do not use Phase B evidence as a prerequisite for source-tag creation, and do not mark `PRODUCTION_ACCEPTED` until every Phase B check passes.
 
 ## Provenance rules
 

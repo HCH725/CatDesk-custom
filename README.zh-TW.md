@@ -203,7 +203,7 @@ accepted tag vX.Y.Z-custom.N
 
 - `runtime/bin/catdesk` 必須是 **實體檔案**，永遠不是 symlink。所有檢查（`test -L`、`codesign -dv`、`shasum -a 256`）都要對檔案本體執行。
 - Rollback 是把 **前一個 accepted artifact 重新簽署並複製** 到同一個 `runtime/bin/catdesk` 路徑。`runtime` 啟用後，launcher 永遠不再指回任何版本化路徑。
-- 驗證階段使用 `~/.local/share/catdesk/runtime-next/bin/catdesk`（實體複製 + 簽署 + 驗證），通過後才 promotion 到 `runtime/bin`。在通過所有 gate 與獨立 audit 前，不得修改 `runtime/bin` 或 launcher。
+- 只有在 required update workflow 取得 production deployment/activation 明確批准後，staging 才能建立或更新 `~/.local/share/catdesk/runtime-next/bin/catdesk`（實體複製 + 簽署 + 驗證），再 promotion 到 `runtime/bin`。在通過所有 gate 與獨立 audit 前，不得修改 `runtime/bin` 或 launcher。
 - `runtime/` 與 `runtime-next/` 是 production runtime state，**絕對不能 commit**。
 
 > **Canonical / current production（Phase B — PRODUCTION_ACCEPTED）：** launcher 的**唯一**目標是實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（簽署 `Identifier=com.hong.catdesk`、`DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`）。版本化產物 `~/.local/share/catdesk/<version>-custom/bin/catdesk` 僅保留為 **provenance / rollback source**，**不得**再作為 launcher target。歷史備註：Phase B 啟用前，實際運行的 child 曾暫時為 `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk`（版本化路徑、ad-hoc `CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`、`Identifier=catdesk-e6cd98f31dbf91fd`）—— 該狀態已退役，不得視為當前 production。
@@ -231,13 +231,13 @@ Bootstrap 是在該 Mac 上 **一次性本機操作** 建立 Keychain certificat
 - **B（0.5.0-custom.3 內容）簽署後：** `SHA256=7e840ab9fc32f38adfa4fb187f92833c24c68fba4881410530053007d83023ac`、`CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`、`Identifier=com.hong.catdesk`、`Authority=CatDesk Local Code Signing`
 - **兩者皆：** `Designated Requirement = identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"` 且 `codesign --verify --strict --verbose=4` = `valid on disk` + `satisfies its Designated Requirement`。
 
-這證明穩定 certificate + 穩定 identifier 能在 binary 內容變動下維持 **穩定 DR**，即 TCC-persistence 的必要條件。每個 accepted release 複製並簽署至 `runtime-next/bin/catdesk` 時，都必須維持相同 DR 與 `Identifier=com.hong.catdesk`；CDHash／SHA256 屬內容特定值，版本改變時本來就會不同，必須逐 release 留存。
+這證明穩定 certificate + 穩定 identifier 能在 binary 內容變動下維持 **穩定 DR**，即 TCC-persistence 的必要條件。每次 production deployment 只有在取得明確批准後，才將 accepted release stage 到 `runtime-next/bin/catdesk`，並確認相同 DR 與 `Identifier=com.hong.catdesk`；CDHash／SHA256 屬內容特定值，版本改變時本來就會不同，必須逐 release 留存。
 
 ### 驗證門檻（不得只看 `find-identity` 文字）
 
 `security find-identity -v -p codesigning` 可能對此本機 self-signed certificate 顯示 `CSSMERR_TP_NOT_TRUSTED`。此 warning 僅為 **資訊提示，不是 blocker** —— 真正的 gate 是 `codesign --verify --strict` 與 DR 滿足度。
 
-每次 deploy/stage 都必須以以下指令為 gate：
+取得 required update workflow 的 production deployment/activation 明確批准後，每次 deploy/stage 都必須以以下指令為 gate：
 
 ```bash
 codesign --verify --strict --verbose=4 /Users/hong/.local/share/catdesk/runtime-next/bin/catdesk  # 或 runtime/bin/catdesk
@@ -340,7 +340,11 @@ Canonical controller 產物：`scripts/activate-stable-runtime.sh`（預設 `--p
 
 ## Acceptance checklist
 
-能編譯不代表升級成功。至少必須確認：
+能編譯不代表升級成功；驗收分成兩個明確階段。
+
+### Phase A — Source acceptance（建立 accepted downstream tag 前）
+
+對凍結的候選 commit 執行以下檢查。這階段只驗 source：不得寫入 installed artifact、`runtime-next`、stable runtime、launcher/plist、launchd state 或 production config，也不要求執行正式環境探測。
 
 - formatting pass；
 - upstream test suite pass；
@@ -350,12 +354,22 @@ Canonical controller 產物：`scripts/activate-stable-runtime.sh`（預設 `--p
 - read-only external root 無法寫入；
 - traversal / symlink escape 被拒絕；
 - canonical/external target 的 change tracking 正確；
-- 新 release 的 API/schema/runtime behavior 正常；
-- launchd active child 指向正確的 production binary — **canonical / current production（Phase B — PRODUCTION_ACCEPTED）：** 必須是實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（launcher 唯一目標；版本化產物僅為 provenance/rollback source，不得作 launcher target）；
+- 新 release 的 API/schema/runtime behavior 在隔離的非正式環境驗證通過；
+- 所有 source test 暫存檔清除。
+
+只有 Phase A 檢查與 independent audit 全部通過後，才可依 required update workflow 將完全相同的 audited commit merge 並建立 tag。
+
+### Phase B — Production acceptance（取得明確部署批准並啟用後）
+
+source-accepted tag 建立且漢秦哥明確批准 production deployment/activation 之前，不得開始本階段。先確認 staged signature/identity gates 通過，再驗證：
+
+- launchd active child 指向實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（launcher 唯一目標；版本化產物僅為 provenance/rollback source，不得作 launcher target）；
 - CatDesk 沒有 crash loop；
 - `/Volumes/ExpansionDrive` write/read/delete acceptance pass；
 - Cloudflare tunnel continuity 不受影響；
-- 所有測試產生的暫存檔都清除。
+- required update workflow 的所有 post-activation acceptance checks 通過。
+
+不得把 Phase B 證據當成建立 source tag 的前置條件；所有 Phase B 檢查通過前，不得標記 `PRODUCTION_ACCEPTED`。
 
 ## Provenance 規則
 

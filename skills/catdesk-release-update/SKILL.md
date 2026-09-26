@@ -43,7 +43,7 @@ accepted tag vX.Y.Z-custom.N
 
 - `runtime/bin/catdesk` MUST be a **physical file**, never a symlink (`test ! -L`).
 - Rollback = re-sign and copy the **previous accepted versioned artifact** to the **same** `runtime/bin/catdesk` path. Never re-point the launcher to a versioned path after `runtime` is adopted.
-- Staging validation path is `~/.local/share/catdesk/runtime-next/bin/catdesk` (physical copy → sign → verify). Do not touch `runtime/bin` or the launcher until the staged file passes all gates and independent audit.
+- Only after the explicit production deployment/activation approval in Required release workflow step 12 may staging create or update `~/.local/share/catdesk/runtime-next/bin/catdesk` (physical copy → sign → verify). Do not touch `runtime/bin` or the launcher until the staged file passes all gates and independent audit.
 - `runtime/` and `runtime-next/` are runtime state and MUST never be committed.
 
 ### Stable signing identity (one-time local bootstrap — local secret)
@@ -64,11 +64,11 @@ Two different contents signed with this identity prove DR stability despite diff
 - **B (0.5.0-custom.3 content) signed:** `SHA256=7e840ab9fc32f38adfa4fb187f92833c24c68fba4881410530053007d83023ac`, `CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`, `Identifier=com.hong.catdesk`, `Authority=CatDesk Local Code Signing`
 - **Both:** `Designated Requirement = identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"` and `codesign --verify --strict --verbose=4` = `valid on disk` + `satisfies its Designated Requirement`.
 
-Stage the versioned artifact for the currently accepted downstream tag (resolve it from the synced README and Git tag; currently `v0.9.0-custom.1`) at `~/.local/share/catdesk/runtime-next/bin/catdesk`, then apply the stable signing identity and require the `Identifier` and DR above. The `0.5.0-custom.3` CDHash above is historical identity evidence only; never treat it as the current content hash or a future baseline.
+Do not stage or rewrite the currently accepted downstream artifact as an update preflight. `runtime-next` is production runtime state. Only after the explicit production deployment/activation approval in Required release workflow step 12, stage the final versioned artifact built from the audited source-accepted tag at `~/.local/share/catdesk/runtime-next/bin/catdesk`, then apply the stable signing identity and require the `Identifier` and DR above. The `0.5.0-custom.3` CDHash above is historical identity evidence only; never treat it as the current content hash or a future baseline.
 
 ### Verification gate (`CSSMERR_TP_NOT_TRUSTED` is NOT a blocker)
 
-`security find-identity -v -p codesigning` may show `CSSMERR_TP_NOT_TRUSTED` for this local self-signed cert. This is **informational only** — the gate is the actual codesign verification. Every deploy/stage MUST run and pass:
+`security find-identity -v -p codesigning` may show `CSSMERR_TP_NOT_TRUSTED` for this local self-signed cert. This is **informational only** — the gate is the actual codesign verification. After the explicit deployment/activation approval, every staged/deployed binary MUST run and pass:
 
 ```bash
 codesign --verify --strict --verbose=4 /Users/hong/.local/share/catdesk/runtime-next/bin/catdesk  # or runtime/bin/catdesk
