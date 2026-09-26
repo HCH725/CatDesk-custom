@@ -237,7 +237,7 @@ Bootstrap 是在該 Mac 上 **一次性本機操作** 建立 Keychain certificat
 
 `security find-identity -v -p codesigning` 可能對此本機 self-signed certificate 顯示 `CSSMERR_TP_NOT_TRUSTED`。此 warning 僅為 **資訊提示，不是 blocker** —— 真正的 gate 是 `codesign --verify --strict` 與 DR 滿足度。
 
-取得 required update workflow 的 production deployment/activation 明確批准後，每次 deploy/stage 都必須以以下指令為 gate：
+取得 production deployment/activation 明確批准後，每個 staged 或 deployed binary 都必須通過以下 gate：
 
 ```bash
 codesign --verify --strict --verbose=4 /Users/hong/.local/share/catdesk/runtime-next/bin/catdesk  # 或 runtime/bin/catdesk
@@ -282,16 +282,17 @@ Launcher 唯一目標為穩定 runtime；穩定 `codesign Identifier=com.hong.ca
 5. 比較目前 accepted downstream behavior 與新版 upstream architecture。
 6. 只 port **仍然必要的最小 custom behavior**；禁止把舊 source file 整份蓋到新版。
 7. 保留新版 upstream 的所有適用功能，custom 必須配合新版架構重新適配。
-8. 先把候選版凍結成唯一 source commit；formatting、upstream tests 與 downstream boundary/security tests 都必須對同一 revision 執行。
-9. 從該凍結 revision 建立 **candidate artifact**，只供 review / validation，不是 production 產物。分開記錄 upstream tag/commit、downstream diff、official upstream asset digest（如適用）與 candidate binary SHA-256。
-10. 由獨立 `auditor` 審查同一個 commit、完整 downstream diff、candidate artifact 與實測結果。發現問題就回候選版修復、重跑受影響 gate 並重新 audit；尚有 findings 時不得建立 accepted downstream tag。
-11. source tests 與獨立 audit 全 PASS 後，才把完全相同的 audited commit merge 到 downstream `main`，並建立下一個 accepted `vX.Y.Z-custom.N` tag。驗證 `<tag>^{commit}` 等於 audited commit；tag 後不得再改 source。
-12. 從 accepted tag 建立最終版本化 custom artifact，確認 source commit 就是 audited commit，並將 final custom binary SHA-256 與 upstream official digest 分開記錄。Source-accepted tag 尚不等於 `PRODUCTION_ACCEPTED`。
-13. 在寫入 versioned install artifact、`runtime-next`、stable runtime、launcher/plist、launchd state 或 production config 前，必須先取得漢秦哥對 production deployment/activation 的明確批准。「同意評估或實作升級」不等於批准正式啟用。
-14. 獲批後才安裝到版本化路徑，例如 `~/.local/share/catdesk/<version>-custom/bin/catdesk`，並保留前一個 accepted custom 版本供 rollback。
-15. 以版本化 artifact 建立 stable runtime staging，簽署並驗證穩定身份；activation 前備份舊 binary、launcher、plist。保留 production roots/environment。**CatDesk 更新不得順便重建或修改 Cloudflare tunnel。**
-16. 僅依 canonical stable-runtime procedure 啟用；重連 ChatGPT 後驗 active child 與 production-surface acceptance。
-17. ExpansionDrive I/O、path security 或必要 upstream feature 任一失敗，立刻 rollback 並回報 **PARTIAL/FAIL**。所有 post-activation checks 通過後才能標記 `PRODUCTION_ACCEPTED`。
+8. 凍結 upstream-based candidate commit，並針對該 revision 執行 formatting、相關 upstream suite 與 downstream boundary/security tests。
+9. 固定 candidate SHA 與 `origin/main` SHA。在獨立 integration worktree/branch 合併這兩個精確 revision；逐項合併衝突、保留 main-only files，不得為了消除衝突而整側覆蓋。
+10. 凍結整合 commit `C`。針對 `C` 執行 formatting、完整 Rust/upstream suite、Linux non-root tests、workspace/read-write-root/traversal/symlink/change-tracking tests、usage-ledger contract tests、release-specific behavior checks、`scripts/tests/activate-controller-regression.sh`，以及新 upstream base 至 `C` 的 `git diff --check`。在 scratch 建立僅供 review 的 candidate artifact；分開記錄 upstream/source SHA、official upstream digest（如適用）與實際 custom artifact SHA-256。
+11. 由獨立 `auditor` 審查精確 integration SHA `C`、完整 downstream diff、candidate artifact 與實測結果。任何 source 或 artifact 變動都會使 audit 失效：對新 SHA 重跑受影響 gates 並重新 audit；仍有 findings 時不得打 tag。
+12. 只有全 PASS 後才 fast-forward downstream `main` 到 `C`，建立指向同一 commit 的下一個 source-accepted `vX.Y.Z-custom.N` tag，再 push branch 與 tag。讀回確認 local/remote `main` 與 `<tag>^{commit}` 都等於 `C`。若 PR/rebase/其他整合產生不同最終 SHA，必須先對該 SHA 重跑 gates 與 audit。tag 後不得改 source。
+13. 從 accepted tag 在隔離 scratch 建 final artifact，驗證 source provenance，將實際 SHA-256 與 upstream official digest 分開記錄。Source-accepted tag 尚不等於 `PRODUCTION_ACCEPTED`；scratch 輸出不是 installed artifact。
+14. 在寫入／安裝 `~/.local/share/catdesk/` 下的版本化 artifact、寫入 `runtime-next`、變更 stable runtime 或 launcher/plist、launchd state 或 production config 前，必須取得漢秦哥對 production deployment/activation 的明確批准。「同意評估或實作升級」不等於批准啟用。
+15. 獲批後才安裝版本化 artifact，保留前一 accepted 版本作 rollback，再由版本化 artifact 建立 `runtime-next` 並簽署／驗證穩定身份。staged file 通過所有 gate 與獨立 audit 前，不得 promotion 到 `runtime/bin` 或變更 launcher。
+16. activation 前以 timestamp 備份舊 production binary、launcher、plist 與 rollback recipe。live binary 必須 atomic rename，不可原地覆寫；保留 roots/environment，只改必要項目，且不得順便重建或修改 Cloudflare tunnel。
+17. 僅依 canonical stable-runtime procedure 啟用；重連 ChatGPT 後驗 active child 並執行全部 production-surface acceptance。
+18. ExpansionDrive I/O、path security 或必要 upstream feature 任一失敗，rollback 到前一 accepted artifact 並回報 **PARTIAL/FAIL**，不能宣告 PASS。所有 Phase B 檢查通過後才標記 `PRODUCTION_ACCEPTED`。
 
 ## Production activation 事故防線
 
@@ -344,7 +345,7 @@ Canonical controller 產物：`scripts/activate-stable-runtime.sh`（預設 `--p
 
 ### Phase A — Source acceptance（建立 accepted downstream tag 前）
 
-對凍結的候選 commit 執行以下檢查。這階段只驗 source：不得寫入 installed artifact、`runtime-next`、stable runtime、launcher/plist、launchd state 或 production config，也不要求執行正式環境探測。
+對凍結的最終整合 commit `C`（同時包含 candidate 與固定的 downstream `origin/main`）執行以下檢查。這階段只驗 source：不得寫入／安裝版本化 production artifact、`runtime-next`、stable runtime、launcher/plist、launchd state 或 production config，也不要求正式環境探測。
 
 - formatting pass；
 - upstream test suite pass；
@@ -355,19 +356,25 @@ Canonical controller 產物：`scripts/activate-stable-runtime.sh`（預設 `--p
 - traversal / symlink escape 被拒絕；
 - canonical/external target 的 change tracking 正確；
 - 新 release 的 API/schema/runtime behavior 在隔離的非正式環境驗證通過；
+- Linux non-root tests 對精確 integration commit `C` 通過；
+- `scripts/tests/activate-controller-regression.sh` 通過；
+- upstream base 至 `C` 的 `git diff --check` 通過，且 candidate artifact provenance/hash 已記錄；
+- 獨立 auditor 對精確 `C` 與受審 artifact 給出 PASS；
 - 所有 source test 暫存檔清除。
 
-只有 Phase A 檢查與 independent audit 全部通過後，才可依 required update workflow 將完全相同的 audited commit merge 並建立 tag。
+只有 Phase A 與 independent audit 全 PASS 後，才可 fast-forward `main` 並讓 accepted tag 指向精確受審 commit `C`。
 
 ### Phase B — Production acceptance（取得明確部署批准並啟用後）
 
-source-accepted tag 建立且漢秦哥明確批准 production deployment/activation 之前，不得開始本階段。先確認 staged signature/identity gates 通過，再驗證：
+source-accepted tag 建立且漢秦哥明確批准 production deployment/activation 之前，不得開始本階段。先確認 installed/staged artifact 的 signature/identity gates 通過，再驗證：
 
 - launchd active child 指向實體穩定 runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`（launcher 唯一目標；版本化產物僅為 provenance/rollback source，不得作 launcher target）；
 - CatDesk 沒有 crash loop；
-- `/Volumes/ExpansionDrive` write/read/delete acceptance pass；
+- workspace CRUD/search、configured read/write roots、write-denial 與 outside-read-denial checks 通過；
+- `/Volumes/ExpansionDrive` write/read/delete acceptance 通過；
+- usage-ledger continuity 與 release-specific API/schema/runtime behavior 通過；
 - Cloudflare tunnel continuity 不受影響；
-- required update workflow 的所有 post-activation acceptance checks 通過。
+- required update workflow 的 post-activation acceptance 全部通過，且所有暫存檔都已清除。
 
 不得把 Phase B 證據當成建立 source tag 的前置條件；所有 Phase B 檢查通過前，不得標記 `PRODUCTION_ACCEPTED`。
 

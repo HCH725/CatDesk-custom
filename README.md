@@ -237,7 +237,7 @@ This proves that a stable certificate + stable identifier yields a **stable DR**
 
 `security find-identity -v -p codesigning` may display `CSSMERR_TP_NOT_TRUSTED` for this local self-signed certificate. That warning is **informational only** and is **NOT a blocker** — empirical `codesign --verify --strict` and DR satisfaction are the gate.
 
-After the explicit production deployment/activation approval required by the update workflow, every deploy/stage operation MUST gate on:
+After explicit production deployment/activation approval, every staged or deployed binary MUST pass:
 
 ```bash
 codesign --verify --strict --verbose=4 /Users/hong/.local/share/catdesk/runtime-next/bin/catdesk  # or runtime/bin/catdesk
@@ -282,16 +282,17 @@ When a new stable CatDesk release is approved for evaluation:
 5. Compare the current accepted downstream behavior with the new upstream architecture.
 6. Port only the **minimum custom behavior still required**. Never copy old source files wholesale over newer upstream source.
 7. Preserve all applicable new upstream features and adjust the downstream implementation to the new architecture.
-8. Freeze the candidate to one source commit; run formatting, upstream tests, and targeted downstream boundary/security tests on that exact revision.
-9. Build a **candidate artifact** from the frozen revision for review and validation only. Record the upstream tag/commit, downstream diff, official upstream asset digest (when applicable), and candidate binary SHA-256 separately.
-10. Have the independent `auditor` review that exact commit, the complete downstream diff, the candidate artifact, and measured verification results. Remediate findings on a new frozen candidate, rerun affected gates, and re-audit. Do not create an accepted downstream tag while findings remain.
-11. After source tests and independent audit pass, merge the exact audited commit to downstream `main` and create the next accepted `vX.Y.Z-custom.N` tag. Verify `<tag>^{commit}` equals the audited commit; make no source edits after tagging.
-12. Build the final versioned custom artifact from that accepted tag. Verify its source commit is the audited commit and record the final custom binary SHA-256 separately from the official upstream digest. A source-accepted tag is not yet `PRODUCTION_ACCEPTED`.
-13. Before writing an installed versioned artifact, `runtime-next`, the stable runtime, launcher/plist, launchd state, or production config, obtain Hanqin-ge's explicit approval for production deployment/activation. Authorization to evaluate or implement the upgrade is not activation approval.
-14. After approval, install under a versioned path such as `~/.local/share/catdesk/<version>-custom/bin/catdesk`; retain the previous accepted custom version for rollback.
-15. Stage the stable runtime from the versioned artifact, sign and verify its stable identity, and back up the prior production binary/launcher/plist before activation. Preserve production roots/environment. **Do not rebuild or modify the Cloudflare tunnel as part of a CatDesk binary update.**
-16. Activate only through the canonical stable-runtime procedure, then verify the active child and run production-surface acceptance after reconnecting ChatGPT.
-17. If ExpansionDrive I/O, path security, or a required upstream feature fails, rollback immediately and report **PARTIAL/FAIL**, never PASS. Mark `PRODUCTION_ACCEPTED` only after all post-activation checks pass.
+8. Freeze the upstream-based candidate commit and run formatting, the relevant upstream suite, and targeted downstream boundary/security tests against that exact revision.
+9. Freeze the candidate SHA and `origin/main` SHA. In a dedicated integration worktree/branch, merge those two exact revisions; resolve each conflict by combining the required upstream behavior and downstream contract, and preserve main-only files. Never choose one side wholesale merely to clear a conflict.
+10. Freeze the resulting integration commit `C`. On `C`, run formatting, the full Rust/upstream suite, Linux non-root tests, targeted workspace/read-write-root/traversal/symlink/change-tracking tests, usage-ledger contract tests, release-specific behavior checks, `scripts/tests/activate-controller-regression.sh`, and `git diff --check` from the new upstream base. Build a review-only candidate artifact from `C` in scratch; record upstream and source SHAs, official upstream digest (if applicable), and the actual custom artifact SHA-256 separately.
+11. Have the independent `auditor` review the exact integration SHA `C`, its complete downstream diff, candidate artifact, and measured results. Any source or artifact change invalidates that review: rerun affected gates and re-audit the new exact SHA. Do not tag while findings remain.
+12. Only after PASS, fast-forward downstream `main` to `C` and create the next source-accepted `vX.Y.Z-custom.N` tag at that same commit; then push the branch and tag. Verify local and remote `main` and `<tag>^{commit}` all resolve to `C`. If PR/rebase/other integration produces a different final SHA, run the gates and audit against that SHA before tagging. Make no source edits after tagging.
+13. Build the final artifact from the accepted tag into an isolated scratch location, verify its source provenance, and record its actual SHA-256 separately from the official upstream digest. A source-accepted tag is not `PRODUCTION_ACCEPTED`; scratch output is not an installed artifact.
+14. Before writing/installing a versioned artifact under `~/.local/share/catdesk/`, writing `runtime-next`, changing the stable runtime or launcher/plist, changing launchd state, or touching production config, obtain Hanqin-ge's explicit production deployment/activation approval. Authorization to evaluate or implement the upgrade is not activation approval.
+15. After approval, install the versioned artifact, retain the previous accepted version for rollback, then create `runtime-next` from the versioned artifact and sign/verify the stable identity. Do not promote to `runtime/bin` or change the launcher until the staged file passes all gates and independent audit.
+16. Before activation, timestamp-back up the prior production binary, launcher, and plist with a rollback recipe. Use atomic rename—not in-place overwrite—for the live binary. Preserve roots/environment; change only what the update requires; never rebuild or modify the Cloudflare tunnel as part of a CatDesk binary update.
+17. Activate only through the canonical stable-runtime procedure. After reconnecting ChatGPT, verify the active child and run all production-surface acceptance checks.
+18. If ExpansionDrive I/O, path security, or a required upstream feature fails, roll back to the previous accepted artifact and report **PARTIAL/FAIL**, never PASS. Mark `PRODUCTION_ACCEPTED` only after every Phase B check passes.
 
 ## Production activation guardrails
 
@@ -344,7 +345,7 @@ A downstream release is not accepted merely because it compiles. Acceptance has 
 
 ### Phase A — Source acceptance (before the accepted downstream tag)
 
-Run these checks against the frozen candidate commit. This phase is source-only: do not write an installed artifact, `runtime-next`, the stable runtime, launcher/plist, launchd state, or production config, and do not require live production probes.
+Run these checks against the frozen final integration commit `C`, which includes both the candidate and the frozen downstream `origin/main`. This phase is source-only: do not write/install a versioned production artifact, `runtime-next`, the stable runtime, launcher/plist, launchd state, or production config, and do not require live production probes.
 
 - formatting passes;
 - upstream test suite passes;
@@ -355,19 +356,25 @@ Run these checks against the frozen candidate commit. This phase is source-only:
 - traversal and symlink escape attempts are rejected;
 - change tracking remains correct for canonical/external targets;
 - release-specific upstream API/schema/runtime behavior passes in isolated, non-production validation;
+- Linux non-root tests pass against the exact integration commit `C`;
+- `scripts/tests/activate-controller-regression.sh` passes in the test harness;
+- `git diff --check` passes for the upstream-base-to-`C` range, and candidate artifact provenance/hash are recorded;
+- the independent auditor returns PASS for the exact `C` and artifact under review;
 - all source-test temporary artifacts are removed.
 
-Only after Phase A checks and the independent audit pass may the exact audited commit be merged and tagged as described in the required update workflow.
+Only after Phase A checks and the independent audit pass may `main` be fast-forwarded and the accepted tag point to the exact audited commit `C`.
 
 ### Phase B — Production acceptance (after explicit deployment approval and activation)
 
-Do not begin this phase until the source-accepted tag exists and Hanqin-ge has explicitly approved production deployment/activation. Verify the staged signature/identity gates before promotion, then verify:
+Do not begin this phase until the source-accepted tag exists and Hanqin-ge has explicitly approved production deployment/activation. Verify the installed/staged artifact's signature and identity gates before promotion, then verify:
 
 - the active launchd child points to the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (the launcher's sole target; versioned artifacts are provenance/rollback source only, never a launcher target);
 - CatDesk does not enter a crash loop;
+- workspace CRUD/search, configured read/write roots, write-denial and outside-read-denial checks pass;
 - `/Volumes/ExpansionDrive` write/read/delete acceptance passes;
+- usage-ledger continuity and release-specific API/schema/runtime behavior pass;
 - Cloudflare tunnel continuity is unchanged;
-- all post-activation acceptance checks in the required update workflow pass.
+- all post-activation acceptance checks in the required update workflow pass and all temporary test artifacts are removed.
 
 Do not use Phase B evidence as a prerequisite for source-tag creation, and do not mark `PRODUCTION_ACCEPTED` until every Phase B check passes.
 
