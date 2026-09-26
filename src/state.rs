@@ -794,6 +794,13 @@ fn append_usage_ledger_entry(
         options.mode(0o600);
     }
     let mut file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if file.metadata()?.permissions().mode() & 0o7777 != 0o600 {
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
+    }
 
     // Production CatDesk is a single daemon, so this ledger has one writer.
     // If a previous crash left a partial JSON row, isolate it before appending
@@ -1766,6 +1773,36 @@ mod tests {
         assert_eq!(all_time.tool_output_tokens, 15);
         assert_eq!(all_time.total_tokens, 32);
         assert_eq!(all_time.tool_call_count, 2);
+
+        let _ = std::fs::remove_file(ledger_path);
+        let _ = std::fs::remove_file(config_path);
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn record_turn_usage_repairs_existing_ledger_permissions_before_append() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (mut app, workspace, config_path) = test_app("catdesk-usage-ledger-existing-mode");
+        let ledger_path = workspace.join(USAGE_LEDGER_FILE_NAME);
+        std::fs::write(&ledger_path, b"previous row\n").expect("create existing ledger");
+        std::fs::set_permissions(&ledger_path, std::fs::Permissions::from_mode(0o644))
+            .expect("widen existing ledger permissions");
+
+        app.record_turn_usage(3, 2);
+
+        assert_eq!(
+            std::fs::metadata(&ledger_path)
+                .expect("stat ledger")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        let ledger = std::fs::read_to_string(&ledger_path).expect("read ledger");
+        assert!(ledger.starts_with("previous row\n"));
+        assert!(ledger.lines().nth(1).is_some());
 
         let _ = std::fs::remove_file(ledger_path);
         let _ = std::fs::remove_file(config_path);
