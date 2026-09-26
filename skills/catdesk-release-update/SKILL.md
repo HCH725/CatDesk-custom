@@ -64,7 +64,7 @@ Two different contents signed with this identity prove DR stability despite diff
 - **B (0.5.0-custom.3 content) signed:** `SHA256=7e840ab9fc32f38adfa4fb187f92833c24c68fba4881410530053007d83023ac`, `CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`, `Identifier=com.hong.catdesk`, `Authority=CatDesk Local Code Signing`
 - **Both:** `Designated Requirement = identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"` and `codesign --verify --strict --verbose=4` = `valid on disk` + `satisfies its Designated Requirement`.
 
-Staging from current accepted `0.5.0-custom.3` to `runtime-next/bin/catdesk` must show the same DR (`CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea` for that content).
+Stage the versioned artifact for the currently accepted downstream tag (resolve it from the synced README and Git tag; currently `v0.9.0-custom.1`) at `~/.local/share/catdesk/runtime-next/bin/catdesk`, then apply the stable signing identity and require the `Identifier` and DR above. The `0.5.0-custom.3` CDHash above is historical identity evidence only; never treat it as the current content hash or a future baseline.
 
 ### Verification gate (`CSSMERR_TP_NOT_TRUSTED` is NOT a blocker)
 
