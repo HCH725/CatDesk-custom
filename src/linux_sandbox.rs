@@ -468,6 +468,43 @@ fn bubblewrap_executable(workspace: &Path) -> Option<PathBuf> {
     bubblewrap_executable_in_paths(std::env::split_paths(&path), workspace)
 }
 
+fn configured_roots(variable: &str, alias: &str) -> Vec<PathBuf> {
+    std::env::var_os(variable)
+        .or_else(|| std::env::var_os(alias))
+        .map(|value| std::env::split_paths(&value).collect())
+        .unwrap_or_default()
+}
+
+fn extra_root_mounts(
+    workspace: &Path,
+    read_roots: &[PathBuf],
+    write_roots: &[PathBuf],
+) -> io::Result<Vec<(PathBuf, bool)>> {
+    let workspace = canonical_existing(workspace)?;
+    let mut mounts = Vec::new();
+    for (roots, writable) in [(read_roots, false), (write_roots, true)] {
+        for root in roots {
+            let Ok(path) = root.canonicalize() else {
+                continue;
+            };
+            if path.starts_with(&workspace) {
+                continue;
+            }
+            mounts.push((path, writable));
+        }
+    }
+    mounts.sort_by(|(left_path, left_writable), (right_path, right_writable)| {
+        left_path
+            .components()
+            .count()
+            .cmp(&right_path.components().count())
+            .then_with(|| left_path.cmp(right_path))
+            .then_with(|| left_writable.cmp(right_writable))
+    });
+    mounts.dedup();
+    Ok(mounts)
+}
+
 /// Build a bubblewrap invocation that confines `command` to `workspace` plus its
 /// private `scratch` directory.
 ///
@@ -484,6 +521,7 @@ fn bubblewrap_command(
     workspace: &Path,
     cwd: &Path,
     scratch: &Path,
+    extra_roots: &[(PathBuf, bool)],
 ) -> io::Result<Command> {
     let workspace = canonical_existing(workspace)?;
     let cwd = canonical_existing(cwd)?;
@@ -506,6 +544,15 @@ fn bubblewrap_command(
 
     for path in runtime_read_paths() {
         bwrap_command.arg("--ro-bind-try").arg(&path).arg(&path);
+    }
+
+    for (path, writable) in extra_roots {
+        let bind_flag = if *writable {
+            "--bind-try"
+        } else {
+            "--ro-bind-try"
+        };
+        bwrap_command.arg(bind_flag).arg(&path).arg(&path);
     }
 
     // Root-owned SSH client config appears as uid 65534 inside the unprivileged
@@ -598,7 +645,13 @@ pub fn helper_command(
         })?;
 
     let prepared = match bubblewrap_executable(workspace) {
-        Some(bwrap) => bubblewrap_command(&bwrap, command, workspace, cwd, &scratch_dir),
+        Some(bwrap) => {
+            let read_roots = configured_roots("CATDESK_READ_ROOTS", "CATDESK_READ_ROOT");
+            let write_roots = configured_roots("CATDESK_WRITE_ROOTS", "CATDESK_WRITE_ROOT");
+            extra_root_mounts(workspace, &read_roots, &write_roots).and_then(|extra_roots| {
+                bubblewrap_command(&bwrap, command, workspace, cwd, &scratch_dir, &extra_roots)
+            })
+        }
         None => Err(io::Error::other(
             "no usable sandbox: bwrap was not found on PATH outside the workspace. Install \
              bubblewrap to run commands confined.",
@@ -798,6 +851,7 @@ mod tests {
             &workspace,
             &cwd,
             &scratch,
+            &[],
         )
         .expect("build bubblewrap command");
         let args: Vec<_> = command.get_args().map(|arg| arg.to_os_string()).collect();
@@ -815,6 +869,78 @@ mod tests {
             .map(|pair| PathBuf::from(pair[1].clone()))
             .expect("--chdir argument");
         assert_eq!(chdir, cwd.canonicalize().expect("canonical cwd"));
+    }
+
+    #[test]
+    fn bubblewrap_command_mounts_extra_roots_with_separate_permissions() {
+        let tree = TempTree::new();
+        let workspace = tree.path().join("workspace");
+        let read_root = tree.path().join("read-root");
+        let write_root = read_root.join("write-root");
+        let scratch = tree.path().join("scratch");
+        std::fs::create_dir_all(&workspace).expect("create workspace");
+        std::fs::create_dir_all(&write_root).expect("create write root");
+        std::fs::create_dir_all(&scratch).expect("create scratch");
+        let read_roots = vec![read_root.clone(), write_root.clone()];
+        let write_roots = vec![write_root.clone()];
+        let extra_roots = extra_root_mounts(&workspace, &read_roots, &write_roots)
+            .expect("resolve extra-root mounts");
+
+        let command = bubblewrap_command(
+            Path::new("/usr/bin/bwrap"),
+            "true",
+            &workspace,
+            &workspace,
+            &scratch,
+            &extra_roots,
+        )
+        .expect("build bubblewrap command");
+        let args = command
+            .get_args()
+            .map(OsStr::to_os_string)
+            .collect::<Vec<_>>();
+        let read_root = read_root.canonicalize().expect("canonical read root");
+        let write_root = write_root.canonicalize().expect("canonical write root");
+        let workspace = workspace.canonicalize().expect("canonical workspace");
+
+        let read_mount = args.windows(3).position(|window| {
+            window[0] == "--ro-bind-try"
+                && window[1] == read_root.as_os_str()
+                && window[2] == read_root.as_os_str()
+        });
+        let read_write_root_mount = args.windows(3).position(|window| {
+            window[0] == "--ro-bind-try"
+                && window[1] == write_root.as_os_str()
+                && window[2] == write_root.as_os_str()
+        });
+        let write_mount = args.windows(3).position(|window| {
+            window[0] == "--bind-try"
+                && window[1] == write_root.as_os_str()
+                && window[2] == write_root.as_os_str()
+        });
+        let workspace_mount = args.windows(3).position(|window| {
+            window[0] == "--bind"
+                && window[1] == workspace.as_os_str()
+                && window[2] == workspace.as_os_str()
+        });
+        assert!(
+            read_mount.is_some(),
+            "missing read-only extra-root mount: {args:?}"
+        );
+        assert!(
+            read_write_root_mount.is_some(),
+            "missing read-only child mount: {args:?}"
+        );
+        assert!(
+            write_mount.is_some(),
+            "missing writable extra-root mount: {args:?}"
+        );
+        assert!(
+            read_mount < read_write_root_mount
+                && read_write_root_mount < write_mount
+                && write_mount < workspace_mount,
+            "mounts must layer read-only roots, writable roots, then workspace: {args:?}"
+        );
     }
 
     #[test]

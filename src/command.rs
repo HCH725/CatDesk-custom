@@ -95,34 +95,6 @@ pub fn resolve_workspace_path(
     Ok(candidate)
 }
 
-/// Resolve `input` relative to `cwd`, rejecting path traversal outside the workspace root.
-pub fn resolve_command_path(
-    workspace_root: &str,
-    cwd: &Path,
-    input: Option<&str>,
-) -> Result<PathBuf, String> {
-    let root = Path::new(workspace_root)
-        .canonicalize()
-        .map(normalize_windows_verbatim_path)
-        .map_err(|e| e.to_string())?;
-    let input = input.unwrap_or(".");
-
-    let candidate = if Path::new(input).is_absolute() {
-        PathBuf::from(input)
-    } else {
-        cwd.join(input)
-    };
-
-    let candidate = normalize_windows_verbatim_path(candidate.canonicalize().unwrap_or(candidate));
-    if !candidate.starts_with(&root) {
-        return Err(format!(
-            "Path escapes workspace root: {}",
-            candidate.display()
-        ));
-    }
-    Ok(candidate)
-}
-
 pub fn normalize_windows_verbatim_path(path: PathBuf) -> PathBuf {
     normalize_windows_verbatim_path_impl(path)
 }

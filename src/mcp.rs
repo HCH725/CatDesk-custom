@@ -1439,7 +1439,7 @@ async fn handle_start_command(
         Ok(value) => value,
         Err(error) => return tool_error_response(req, error),
     };
-    let cwd = match command::resolve_workspace_path(workspace_root, cwd_input) {
+    let cwd = match workspace_tools::resolve_read_path(workspace_root, cwd_input) {
         Ok(path) => path,
         Err(error) => {
             return tool_error_response(
@@ -1625,7 +1625,7 @@ async fn handle_run_command(
         return tool_error_response(req, message.into());
     }
 
-    let cwd = match command::resolve_workspace_path(workspace_root, cwd_input) {
+    let cwd = match workspace_tools::resolve_read_path(workspace_root, cwd_input) {
         Ok(p) => p,
         Err(e) => {
             return tool_error_response(req, format!("code: PATH_OUTSIDE_WORKSPACE\nmessage: {e}"));
@@ -1641,16 +1641,19 @@ async fn handle_run_command(
     };
 
     if let Some(intercept) = command::detect_list_files_intercept(&effective_command) {
-        let listing_path =
-            match command::resolve_command_path(workspace_root, &cwd, intercept.path.as_deref()) {
-                Ok(path) => path,
-                Err(e) => {
-                    return tool_error_response(
-                        req,
-                        format!("code: PATH_OUTSIDE_WORKSPACE\nmessage: {e}"),
-                    );
-                }
-            };
+        let listing_path = match workspace_tools::resolve_read_path_from_cwd(
+            workspace_root,
+            &cwd,
+            intercept.path.as_deref(),
+        ) {
+            Ok(path) => path,
+            Err(e) => {
+                return tool_error_response(
+                    req,
+                    format!("code: PATH_OUTSIDE_WORKSPACE\nmessage: {e}"),
+                );
+            }
+        };
         let listing_path_str = listing_path.to_string_lossy().to_string();
         match workspace_tools::list_files_filtered(
             workspace_root,
@@ -1726,11 +1729,11 @@ fn resolve_intercepted_move_path(
     cwd: &Path,
     intercept: &command::InterceptedMovePathRequest,
 ) -> Result<ResolvedMovePathIntercept, String> {
-    let from = command::resolve_command_path(workspace_root, cwd, Some(&intercept.from))
-        .map_err(|e| format!("code: PATH_OUTSIDE_WORKSPACE\nmessage: {e}"))?;
+    let from = workspace_tools::resolve_write_path_from_cwd(workspace_root, cwd, &intercept.from)
+        .map_err(|e| format!("code: PATH_OUTSIDE_WRITE_ROOTS\nmessage: {e}"))?;
     let destination_operand =
-        command::resolve_command_path(workspace_root, cwd, Some(&intercept.to))
-            .map_err(|e| format!("code: PATH_OUTSIDE_WORKSPACE\nmessage: {e}"))?;
+        workspace_tools::resolve_write_path_from_cwd(workspace_root, cwd, &intercept.to)
+            .map_err(|e| format!("code: PATH_OUTSIDE_WRITE_ROOTS\nmessage: {e}"))?;
 
     let source_meta = std::fs::symlink_metadata(&from)
         .map_err(|_| format!("Source path not found: {}", from.display()))?;
@@ -3354,7 +3357,7 @@ fn change_scope_for_request(req: &JsonRpcRequest, workspace_root: &str) -> Chang
     let arguments = tool_arguments(req);
 
     let resolve = |path: Option<&str>| {
-        path.and_then(|value| command::resolve_workspace_path(workspace_root, Some(value)).ok())
+        path.and_then(|value| workspace_tools::resolve_read_path(workspace_root, Some(value)).ok())
     };
 
     match tool_name.as_str() {
@@ -3375,7 +3378,7 @@ fn change_scope_for_request(req: &JsonRpcRequest, workspace_root: &str) -> Chang
             }
 
             if let Some(intercept) = command::detect_move_path_intercept(command_text) {
-                let Ok(cwd) = command::resolve_workspace_path(
+                let Ok(cwd) = workspace_tools::resolve_read_path(
                     workspace_root,
                     arguments.get("cwd").and_then(Value::as_str),
                 ) else {
@@ -3391,7 +3394,7 @@ fn change_scope_for_request(req: &JsonRpcRequest, workspace_root: &str) -> Chang
                 ]);
             }
 
-            command::resolve_workspace_path(
+            workspace_tools::resolve_read_path(
                 workspace_root,
                 arguments.get("cwd").and_then(Value::as_str),
             )
@@ -3928,7 +3931,40 @@ fn handle_delete_path(req: &JsonRpcRequest, workspace_root: &str) -> JsonRpcResp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
     use uuid::Uuid;
+
+    struct ReadRootsEnvGuard(Option<OsString>, Option<OsString>);
+
+    impl ReadRootsEnvGuard {
+        fn set(root: &Path) -> Self {
+            let previous_read = std::env::var_os("CATDESK_READ_ROOTS");
+            let previous_write = std::env::var_os("CATDESK_WRITE_ROOTS");
+            let roots = std::env::join_paths([root.as_os_str()]).expect("join read roots");
+            unsafe {
+                std::env::set_var("CATDESK_READ_ROOTS", roots);
+                std::env::set_var("CATDESK_WRITE_ROOTS", OsString::new());
+            }
+            Self(previous_read, previous_write)
+        }
+    }
+
+    impl Drop for ReadRootsEnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(previous) = self.0.take() {
+                    std::env::set_var("CATDESK_READ_ROOTS", previous);
+                } else {
+                    std::env::remove_var("CATDESK_READ_ROOTS");
+                }
+                if let Some(previous) = self.1.take() {
+                    std::env::set_var("CATDESK_WRITE_ROOTS", previous);
+                } else {
+                    std::env::remove_var("CATDESK_WRITE_ROOTS");
+                }
+            }
+        }
+    }
 
     fn resources_list_request() -> JsonRpcRequest {
         JsonRpcRequest {
@@ -4561,6 +4597,10 @@ mod tests {
         .await;
 
         let result = response.result.as_ref().expect("missing result");
+        assert!(
+            response.error.is_none(),
+            "tool failures stay in the MCP result envelope"
+        );
         assert_eq!(result.get("isError").and_then(Value::as_bool), Some(true));
         let structured = result
             .get("structuredContent")
@@ -6094,6 +6134,92 @@ mod tests {
 
         let _ = std::fs::remove_file(workspace_root.join("src/lib.rs"));
         let _ = std::fs::remove_dir_all(workspace_root);
+    }
+
+    #[tokio::test]
+    async fn run_command_listing_can_read_an_extra_root_cwd() {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "catdesk-mcp-extra-list-workspace-{}",
+            Uuid::new_v4()
+        ));
+        let extra_root =
+            std::env::temp_dir().join(format!("catdesk-mcp-extra-list-root-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace_root).expect("create workspace");
+        std::fs::create_dir_all(&extra_root).expect("create extra read root");
+        std::fs::write(extra_root.join("external.txt"), "outside workspace\n")
+            .expect("write external fixture");
+        let _read_roots = ReadRootsEnvGuard::set(&extra_root);
+
+        let req = tool_call_request(
+            "run_command",
+            json!({
+                "command": "ls -Ra .",
+                "cwd": extra_root.to_string_lossy(),
+            }),
+        );
+        let workspace_root_str = workspace_root.to_string_lossy().into_owned();
+        let response = handle_tools_call(
+            &req,
+            &workspace_root_str,
+            1,
+            Mode::Both,
+            ToolMode::MultiTools,
+            false,
+            &CommandJobManager::new(),
+            &None,
+        )
+        .await;
+
+        assert_no_text_content(&response);
+        let structured = response
+            .result
+            .as_ref()
+            .and_then(|result| result.get("structuredContent"))
+            .expect("external-root listing should return structured content");
+        assert_eq!(
+            structured
+                .get("interceptedCommandName")
+                .and_then(Value::as_str),
+            Some("ls")
+        );
+        assert!(
+            structured
+                .get("stdout")
+                .and_then(Value::as_str)
+                .is_some_and(|output| output.contains("external.txt")),
+            "unexpected listing output: {structured:?}"
+        );
+
+        let denied_path = extra_root.join("should-not-be-written.txt");
+        let write_req = tool_call_request(
+            "write",
+            json!({
+                "path": denied_path.to_string_lossy(),
+                "content": "must not be written",
+            }),
+        );
+        let write_response = handle_tools_call(
+            &write_req,
+            &workspace_root_str,
+            1,
+            Mode::Both,
+            ToolMode::MultiTools,
+            false,
+            &CommandJobManager::new(),
+            &None,
+        )
+        .await;
+        let result = write_response
+            .result
+            .as_ref()
+            .expect("missing write result");
+        assert_eq!(result.get("isError").and_then(Value::as_bool), Some(true));
+        assert!(content_text(&write_response).contains("configured write roots"));
+        assert!(!denied_path.exists(), "read-only root was modified");
+
+        drop(_read_roots);
+        let _ = std::fs::remove_dir_all(workspace_root);
+        let _ = std::fs::remove_dir_all(extra_root);
     }
 
     #[tokio::test]
