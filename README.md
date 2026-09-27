@@ -2,70 +2,36 @@
 
 [English](README.md) | [繁體中文](README.zh-TW.md)
 
-> **Private downstream repository for the production CatDesk installation used in Hanqin-ge's environment.**
->
-> This repository is **not** a clean mirror of upstream CatDesk. It is the authoritative source for:
->
-> **official Xeift/CatDesk stable release + the smallest required downstream customizations = production CatDesk**
+Private downstream repository for the CatDesk instance used on Hanqin-ge's Mac.
 
-## Repository purpose
+The design goal is intentionally narrow:
 
-- **Upstream project:** https://github.com/Xeift/CatDesk
-- **Upstream source of truth:** official stable tags from `Xeift/CatDesk`
-- **Accepted production baseline (currently deployed):** `v0.9.0`
-- **Accepted upstream commit:** `37197b9f9530baa6634e32365be99ca78d9373cc`
-- **Downstream release naming:** `vX.Y.Z-custom.N`
-- **Accepted downstream release:** `v0.9.0-custom.1` (**PRODUCTION_ACCEPTED**, source-level provenance commit `495893ed95f39d997177f516eb69dae632966324`)
-- **Official upstream macOS arm64 artifact SHA256 (v0.9.0):** `4d95fca3945978b78afd45ca13bf7c6aad0dddf334c5338b54e530b7fbcacf06`
-- **Downstream versioned arm64 artifact SHA256 (v0.9.0-custom.1):** `00e274be65a10466a80ba0cecd4b32c95ae95f0fc0a296e50b63a3529a5a601d`
-- **Current production runtime:** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (stable-signed SHA256 `1b1ea9c4173cb16ddc3019ea5a0451829819971f731487ce281437faee8eb798`)
-- **Previous accepted rollback release:** `v0.7.0-custom.1` (retained as rollback source; versioned artifact SHA256 `33593e1c33818dacabc6fee8a90923cec5e4376d974807d9c416a7a677ab006d`)
-- **Production source of truth:** this private repository after a downstream release has passed acceptance and audit
+> **official Xeift/CatDesk upstream + the minimum external-filesystem patch**
 
-### Accepted release record — `v0.9.0-custom.1` (2026-09-17)
+Cloudflare, launchd, code signing, and production activation are deployment concerns. They are not CatDesk source customizations.
 
-- **Baseline:** upstream `v0.9.0` (tag object `2f6037e479bd7467d6f60dc56e0e114186a03be8`, commit `37197b9f9530baa6634e32365be99ca78d9373cc`); frozen candidate `d1ce2948e8230f0ec7f843cdfb1522e3e44d59a1`, merged as `495893e`.
-- **History note:** sibling commit `266f107` (standing-rules update to `skills/catdesk-release-update/SKILL.md`, written on the agent side during this upgrade) is **deliberately retained** by owner decision. It caused the pre-audit revision drift that the re-freeze to `d1ce294` resolved; its content passed the credential scan and the independent re-audit, and it is part of this release's history.
-- **Independent audits:** pre-activation audit FAIL (card `t_dc033b89`) → remediation commit `d1ce294` → re-audit **PASS** (`t_03492b4d`: F1–F7 all pass, 239 debug/release tests, activation harness T1–T4, credential scan all zero, production untouched during audit).
-- **Activation (2026-09-17 06:25:55):** content-identity upgrade path (no `ALREADY_ACTIVE` false positive), atomic rename promotion, exactly one `kickstart -k`, replacement child PID change (`1002` → `51977`), 30s triple stability, `nc -z 127.0.0.1 3200` PASS; launcher/plist hashes unchanged; Cloudflare untouched; backup `~/.catdesk/activation/backups/20260917-062555-51896`.
-- **Post-activation acceptance (reconnected ChatGPT):** PASS — MCP discover/command/search/write/delete, workspace and ExpansionDrive CRUD, write-root and outside-read-root denials, usage ledger continuity (16374 → 16512 rows, stable `eventId`/`timestampMs` schema), Cloudflare continuity.
-- **Custom source scope:** `src/mcp.rs`, `src/state.rs`, `src/workspace_tools.rs`. `src/change_tracking/mod.rs`, `src/handoff.rs` and `src/linux_sandbox.rs` are upstream-identical in this release. `src/change_tracking/mod.rs` became upstream-identical because upstream `v0.8.0` `normalize_scope_paths` plus the downstream canonicalizing resolvers absorb the previous 7-line target-canonicalize custom; contract §3 is locked by the downstream boundary test `external_root_targets_keep_accurate_before_after_tracking`.
-- **Verification (measured):** scoped `rustfmt --edition 2024 --check` pass; `cargo check --all-targets` pass; `cargo test` 239 passed / 0 failed; `cargo test --release` 239 passed / 0 failed; `scripts/tests/activate-controller-regression.sh` PASS (T1–T4).
-- **Rollback source:** previous accepted artifact `~/.local/share/catdesk/0.7.0-custom.1/bin/catdesk`, re-signed as `com.hong.catdesk` and atomically replaced into the same `runtime/bin/catdesk` path.
+## Current accepted state
 
-Do **not** replace this repository with a fresh upstream checkout. Future updates must preserve the downstream contract documented below while retaining all relevant upstream release behavior.
+- **Upstream:** https://github.com/Xeift/CatDesk
+- **Private downstream:** https://github.com/HCH725/CatDesk-custom
+- **Accepted upstream release:** `v0.9.5`
+- **Accepted upstream commit:** `f4f4bcc6a14b87f00d17f102f3006dfd96c0b341`
+- **Accepted downstream release:** `v0.9.5-custom.2`
+- **Current production runtime:** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`
+- **Current production SHA256:** `8c98eb715a9366ce5c3cc3725de609dbd27575916bca33ec05c7f861586612fe`
+- **Stable signing identifier:** `com.hong.catdesk`
+- **Public ingress:** Cloudflare Tunnel, managed outside CatDesk source
+- **Current source delta vs upstream:** exactly two Rust files:
+  - `src/mcp.rs`
+  - `src/workspace_tools.rs`
 
-## Ownership and operating model
+All other CatDesk source files should remain upstream-identical unless a future upstream change makes a different minimal implementation strictly necessary.
 
-The maintenance workflow is intentionally simple:
+## Why this repository exists
 
-1. **Hanqin-ge** decides whether a CatDesk upgrade should proceed.
-2. **ChatGPT** reviews the upstream release, plans the update, and reviews the result.
-3. **Hermes `default` profile** performs the implementation and local verification.
-4. **Hermes `auditor` profile** independently checks the result.
-5. ChatGPT reviews audit findings and decides whether to remediate or advance.
-6. Hermes `default` performs remediation if required, followed by another independent audit.
+Upstream CatDesk normally constrains file tools to its workspace. This deployment also needs controlled access to selected local and external-drive paths.
 
-This repository defines the CatDesk update authority in two layers:
-
-- **README (this file) is the canonical behavioral contract** — what must remain true about production CatDesk regardless of release.
-- **`skills/catdesk-release-update/SKILL.md` (repo-tracked) is the canonical operational procedure** — how Hermes performs an update.
-
-The Hermes runtime entrypoint
-
-`~/.hermes/skills/software-development/catdesk-release-update/SKILL.md`
-
-is only a symlink entrypoint and must resolve to the repo-tracked skill above. If the README and the skill conflict, the README wins: stop the upgrade, reconcile the skill with the README, and only then continue.
-
-Before every upgrade, Hermes must fetch/sync this repository, confirm `origin/main`, read this README and the repo-tracked skill, confirm the runtime skill entrypoint resolves to the repo-tracked file, and then identify the current accepted `vX.Y.Z-custom.N` tag and rollback version. Never rely on memory or an old worktree.
-
-## Current downstream contract
-
-### 1. Separate read and write roots
-
-Production CatDesk extends upstream workspace access with explicitly configured extra roots.
-
-Current production policy:
+Current policy:
 
 ```text
 WORKSPACE_ROOT=/Users/hong/workspace
@@ -73,368 +39,194 @@ CATDESK_READ_ROOTS=/Users/hong:/Volumes/ExpansionDrive
 CATDESK_WRITE_ROOTS=/Volumes/ExpansionDrive
 ```
 
-Required semantics:
+Required behavior:
 
-- `WORKSPACE_ROOT` remains the normal workspace boundary.
-- `CATDESK_READ_ROOTS` adds explicit locations that may be read.
-- `CATDESK_WRITE_ROOTS` adds explicit locations that may be written, edited, deleted, or used as move targets/sources.
-- **Read permission must never imply write permission.**
-- Write roots must stay readable for change tracking: the change-scope resolver takes the read boundary, so a **write-only** root would mutate without a `ChangeSession` before/after diff. Current production policy keeps every `CATDESK_WRITE_ROOTS` entry readable (`/Volumes/ExpansionDrive` appears in both lists). Adding a write-only root requires extending the change-scope resolver first, with a regression test.
-- Multiple roots must use the operating system's path-list semantics.
-- Do not broaden these roots to the entire home directory or an entire drive unless explicitly approved and tested.
+- workspace access continues to work normally;
+- configured read roots may be read/search/listed;
+- configured write roots may be written/edited/deleted/moved;
+- read permission never implies write permission;
+- canonicalization must block traversal and symlink escapes;
+- paths outside configured roots must be rejected;
+- `/Volumes/ExpansionDrive` must remain usable for real read/write operations.
 
-### 2. Canonical path safety
+This is the only standing CatDesk source customization.
 
-All downstream extra-root access must preserve path-boundary security:
+## Explicitly not part of CatDesk custom source
 
-- Canonicalize existing candidate paths.
-- For paths that do not exist yet, canonicalize the nearest existing parent before boundary validation.
-- Reject traversal outside configured roots.
-- Reject symlink escapes outside configured roots.
-- Preserve distinct read and write boundary checks.
+The following are separate concerns and must not be added back into CatDesk core merely for convenience:
 
-### 3. Canonical change tracking
+- Cloudflare Tunnel;
+- launchd service management;
+- activation/restart orchestration;
+- TokenBar integration;
+- CatDesk usage ledger / telemetry;
+- pricing-model tracking;
+- Hermes/Kanban integration.
 
-Change tracking must operate on canonicalized targets so that external allowed roots, symlinks, edits, deletes, and moves produce accurate before/after tracking.
+If CatDesk usage data is needed by TokenBar in the future, implement that integration in the TokenBar private repository or through an external read-only bridge. Do not reintroduce a CatDesk `state.rs` usage ledger unless there is no viable external interface and the owner explicitly approves it.
 
-### 4. Correct command and move boundaries
+## Source-of-truth order
 
-The downstream behavior in `src/mcp.rs` must continue to distinguish:
-
-- command/current-working-directory resolution that only requires read access;
-- move source paths that require write permission;
-- move destination paths that require write permission;
-- write-boundary failures reported as write-root violations rather than generic workspace failures.
-
-### 5. Append-only local usage ledger
-
-Production CatDesk must expose its existing MCP token accounting as a minimal local event ledger at `~/.catdesk/usage.jsonl` for downstream usage consumers.
-
-Required semantics:
-
-- Keep `config.toml` usage totals as the existing cumulative state; the ledger supplements rather than replaces them.
-- Append one JSONL row for each recorded MCP tool call using the stable fields `eventId`, `timestampMs`, `inputTokens`, `outputTokens`, `bucket`, and `pricingModel`.
-- `pricingModel` records the ChatGPT model identity used for downstream cost estimation while CatDesk remains displayed as its own `catdesk-mcp` usage source. Update the versioned `CURRENT_USAGE_PRICING_MODEL` when the ChatGPT runtime moves to a new model; never infer the model from the accounting `bucket`.
-- `eventId` must be unique per recorded event and remain the stable downstream deduplication identity even if ledger rows are moved or reordered.
-- Do not duplicate derived totals such as `totalTokens` in each row.
-- Production assumes the CatDesk daemon is the sole ledger writer. If a crash leaves a truncated final row, the next append must isolate that fragment with a newline before writing the next complete event.
-- A ledger write failure must be logged as a warning and must not fail the MCP tool response.
-- Newly created ledger files must be private to the user on Unix-like systems (`0600`).
-- Do not fabricate timestamped history for usage that predates the ledger. Historical cumulative totals remain in `config.toml`.
-- `usage.jsonl` is runtime state and must never be committed to this repository.
-
-### 6. Preserve upstream release behavior
-
-Downstream changes must never erase features introduced by newer upstream releases.
-
-For the historical `v0.7.0` baseline, acceptance included preserving (all items remain required):
-
-- `read` support for a `paths` array;
-- the documented maximum of 32 paths per batch;
-- the upstream batch read size limit;
-- `poll_command` long-poll behavior and its documented wait limit;
-- cursor-based incremental command output;
-- draining buffered output while `hasMoreOutput=true`, even after a job reaches a terminal state;
-- connector bootstrap/widget completion behavior introduced before `v0.5.0`;
-- Traditional Chinese mode selection and persisted UI language preference;
-- opt-in macOS Terminal.app profile flow and its persisted preference;
-- macOS Chromium-family detection in standard `/Applications` and `~/Applications` bundles;
-- upstream `v0.7.0` session handoff (`create_handoff`) with workspace-specific identity and ChatGPT Library recovery (native implementation; `src/handoff.rs` carries no downstream customization);
-- upstream Linux sandbox SSH authentication behavior.
-
-For the current `v0.9.0-custom.1` baseline, acceptance additionally includes preserving:
-
-- the `widgetCornerStyle` setting end to end (config, widget payload, resource query parameter) at widget resource revision 6;
-- the expanded Traditional Chinese coverage (dashboard, settings, browser selection, ngrok setup, themes, tool modes, runtime logs) while the launcher-critical English strings stay intact (`Select mode`, `Control Computer`, `Control Browser`, `Both`, `RUNNING`, `port 3200`, `Installed browsers`, `Select Browser`);
-- local-time log timestamps (`local_now`, exported log filename offset);
-- upstream `v0.9.0` widget surface revisions;
-- upstream Linux sandbox git-metadata handling (Linux-only; no macOS runtime effect);
-- upstream `v0.9.0` session handoff with `src/handoff.rs` still free of downstream customization.
-
-Release-specific checks must be re-derived from the release notes every time upstream changes.
-
-## Current custom source scope
-
-The accepted `v0.7.0-custom.1` downstream implementation modifies only these upstream source files:
+The release order is mandatory:
 
 ```text
-src/change_tracking/mod.rs
-src/mcp.rs
-src/state.rs
-src/workspace_tools.rs
+Xeift/CatDesk upstream stable release
+        ↓
+HCH725/CatDesk-custom private repo
+  reviewed main + accepted custom tag
+        ↓
+local release build from that accepted tag
+        ↓
+runtime-next signing / verification
+        ↓
+stable local production runtime
+        ↓
+post-activation acceptance
 ```
 
-The accepted `v0.9.0-custom.1` release needs only three of them:
+**Never deploy a new upstream version directly to the Mac before the corresponding private-repo commit/tag has been pushed and verified.**
+
+The private repository is the downstream source of truth. The local Mac is a deployment target, not a source repository.
+
+## Ownership and operating model
+
+1. Hanqin-ge decides whether an upstream CatDesk release should be adopted.
+2. ChatGPT reviews the release and keeps the scope minimal.
+3. Hermes `default` may implement the update.
+4. Hermes `auditor` may independently review the frozen candidate; a direct `auditor` profile invocation is acceptable.
+5. Do not modify or expand Hermes runtime merely to make a CatDesk audit lane work.
+6. ChatGPT verifies repository state, deployment, and post-activation behavior.
+
+The README is the behavioral contract.
+`skills/catdesk-release-update/SKILL.md` is the operational procedure.
+
+## Required update workflow
+
+When Xeift/CatDesk publishes a new stable release:
+
+1. Fetch `origin` and `upstream`. Confirm local `main == origin/main` and the worktree is clean.
+2. Read the new upstream release notes and inspect API/schema/runtime changes.
+3. Create a clean candidate from the new upstream stable tag/commit.
+4. Port only the minimum extra-roots behavior still required. Do not copy old custom source wholesale.
+5. Prefer deleting downstream code when upstream has absorbed equivalent behavior.
+6. Verify the downstream source diff. The expected default is only `src/mcp.rs` and `src/workspace_tools.rs`; any additional source file requires an explicit justification.
+7. Run source validation:
+   - `cargo fmt --all -- --check`
+   - `cargo check --all-targets`
+   - full Rust tests
+   - focused read/write-root tests
+   - traversal/symlink escape tests
+   - real `/Volumes/ExpansionDrive` read/write test
+   - `git diff --check`
+8. Integrate the accepted candidate into this private repository. Update README/skill only when behavior or release state changed.
+9. Create the next `vX.Y.Z-custom.N` tag and push **both `main` and the tag to `origin`**.
+10. Read back `origin/main` and the remote tag. They must resolve to the intended accepted commit.
+11. **Only after step 10** may local production deployment begin.
+12. Build the local release artifact from the accepted private-repo tag.
+13. Stage/sign it as `com.hong.catdesk` under `runtime-next`, run the read-only activation preflight, then use the canonical one-shot activation controller.
+14. Reconnect from ChatGPT and run post-activation acceptance:
+    - MCP tool calls;
+    - external local read;
+    - ExpansionDrive write/read/delete;
+    - write-root denial;
+    - browser bridge;
+    - Cloudflare continuity.
+15. Keep the controller-created pre-activation backup as the rollback source. If a production-critical boundary fails, roll back rather than adding new infrastructure.
+
+## Stable macOS runtime
+
+Canonical production path:
 
 ```text
-src/mcp.rs
-src/state.rs
-src/workspace_tools.rs
+/Users/hong/.local/share/catdesk/runtime/bin/catdesk
 ```
 
-`src/change_tracking/mod.rs` is **upstream-identical** in this release: upstream `v0.8.0` absorbed the previous 7-line target-canonicalize custom with `normalize_scope_paths`, and the downstream canonicalizing resolvers keep every target canonical before it reaches `ChangeSession`. Contract §3 is locked by the downstream boundary test `external_root_targets_keep_accurate_before_after_tracking` instead of by a source delta.
-
-This scope is descriptive, not permanent. A future upstream architecture may require fewer, different, or no downstream changes. Preserve the **behavioral contract**, not old file layouts.
-
-## Stable macOS runtime identity and deployment contract (Phase B — PRODUCTION_ACCEPTED)
-
-### Root cause
-
-macOS TCC binds permissions to the binary's effective identity (filesystem path, code signature, CDHash, and Designated Requirement). Prior deployments used versioned paths such as `~/.local/share/catdesk/<version>-custom/bin/catdesk` with an **ad-hoc** signature (`Identifier=catdesk-…`, `Signature=adhoc`, `CDHash=aaa5b…`). Each new version therefore presented a **new TCC identity** (path + ad-hoc CDHash/DR) that does not inherit prior TCC grants, leaving orphaned TCC rows and requiring re-prompt.
-
-This is confirmed by the ad-hoc production binary `0.5.0-custom.3` (`CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`, `Identifier=catdesk-e6cd98f31dbf91fd`) versus any stable-signed binary.
-
-### Deployment contract (canonical)
-
-Every promotion MUST follow this single chain and no other path:
+It must remain a physical file and retain the stable local signing identity:
 
 ```text
-accepted tag vX.Y.Z-custom.N
-  → versioned artifact ~/.local/share/catdesk/<version>-custom/bin/catdesk (build provenance)
-  → re-sign with stable signing identity com.hong.catdesk
-  → physical stable runtime ~/.local/share/catdesk/runtime/bin/catdesk (launcher's only target)
-  → launcher exec: spawn /Users/hong/.local/share/catdesk/runtime/bin/catdesk
-  → production acceptance (ephemeral job + triple stability + MCP/Cloudflare/roots)
+Identifier=com.hong.catdesk
+Authority=CatDesk Local Code Signing
+Designated Requirement:
+identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"
 ```
 
-Future upgrades MUST follow GitHub-first → accepted tag → versioned artifact → stable sign/copy → stable runtime → production acceptance; never direct `git pull` on production or `runtime`.
+The launcher continues to point only to the stable runtime path.
 
-Rules:
-
-- `runtime/bin/catdesk` MUST be a **physical file**, never a symlink. All checks (`test -L`, `codesign -dv`, `shasum -a 256`) run against the file itself.
-- Rollback is **previous accepted artifact re-signed and copied** to the **same** `runtime/bin/catdesk` path. No versioned path is ever re-introduced as a launcher target after `runtime` is adopted.
-- Only after the explicit production deployment/activation approval in the required update workflow may staging create or update `~/.local/share/catdesk/runtime-next/bin/catdesk` (physical copy + sign + verify) before promotion to `runtime/bin`. Do not modify `runtime/bin` or the launcher until the staged file passes all gates and independent audit.
-- `runtime/` and `runtime-next/` are production runtime state and MUST never be committed.
-
-> **Canonical / current production (Phase B — PRODUCTION_ACCEPTED):** the launcher's **sole** target is the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (signed `Identifier=com.hong.catdesk`, `DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`). Versioned artifacts `~/.local/share/catdesk/<version>-custom/bin/catdesk` remain **provenance/rollback source only** and MUST never be used as a launcher target. Historical note: before Phase B activation the running child was temporarily `/Users/hong/.local/share/catdesk/0.5.0-custom.3/bin/catdesk` (versioned path, ad-hoc `CDHash=aaa5b23ec711a827b8f981a92f7fc5c306df44ea`, `Identifier=catdesk-e6cd98f31dbf91fd`) — that state is retired and MUST NOT be read as current production.
-
-### Stable signing identity (one-time local bootstrap)
-
-The stable identity that makes the contract TCC-persistent is:
-
-- **Name:** `CatDesk Local Code Signing`
-- **Identifier:** `com.hong.catdesk` (passed as `codesign --identifier com.hong.catdesk`)
-- **Certificate SHA-1 (non-secret):** `7F453106476B0DA6B2FEDBC4BC6F81B8C9ACA51A`
-- **Certificate SHA-256 (non-secret):** `B5705686206499D677B6AF20C470D7C4C7A3E51BE1203738F2DA3F9BC8D3B043`
-- **Subject (non-secret):** `CN=CatDesk Local Code Signing, OU=CatDesk Local, O=Hong Local, C=TW`
-- **Expiry (non-secret):** `2028-12-04`
-- **Expected DR (non-secret):** `identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`
-- **TeamIdentifier:** `not set` (local self-signed)
-
-Bootstrap is a **one-time local machine operation** that creates the Keychain certificate/keypair on that Mac. The certificate and private key are **local secrets and MUST NOT be committed to Git, stored in this repository, or logged** (no p12, no password, no raw key material — only the non-secret fingerprints/subject/expiry above are recorded). Re-creating or rotating the identity on another machine must preserve the same `Identifier` and must not be treated as an in-repo asset.
-
-### Identity proof (cross-binary DR stability)
-
-Two different binaries signed with this identity were independently verified to share the same DR despite different hashes:
-
-- **A (0.5.0-custom.2 content) signed:** `SHA256=617328bd33dfe7b5d02e4e722c1d0b6db4fdeb3b01b2c096b1b81356bb5f372a`, `CDHash=8ec4dd1bfa00d343aafb80a699a3e265ed2e23f7`, `Identifier=com.hong.catdesk`, `Authority=CatDesk Local Code Signing`
-- **B (0.5.0-custom.3 content) signed:** `SHA256=7e840ab9fc32f38adfa4fb187f92833c24c68fba4881410530053007d83023ac`, `CDHash=f0f90badc43c2851273dfb099d5b7a6b306236ea`, `Identifier=com.hong.catdesk`, `Authority=CatDesk Local Code Signing`
-- **Both:** `Designated Requirement = identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"` and `codesign --verify --strict --verbose=4` = `valid on disk` + `satisfies its Designated Requirement`.
-
-This proves that a stable certificate + stable identifier yields a **stable DR** that survives binary content changes, which is the TCC-persistence requirement. For each production deployment, only after explicit deployment/activation approval, the accepted release staged to `runtime-next/bin/catdesk` must exhibit the same DR and `Identifier=com.hong.catdesk`; content-specific CDHash/SHA256 values are expected to change and must be recorded per release.
-
-### Verification gate (do not rely on `find-identity` text)
-
-`security find-identity -v -p codesigning` may display `CSSMERR_TP_NOT_TRUSTED` for this local self-signed certificate. That warning is **informational only** and is **NOT a blocker** — empirical `codesign --verify --strict` and DR satisfaction are the gate.
-
-After explicit production deployment/activation approval, every staged or deployed binary MUST pass:
-
-```bash
-codesign --verify --strict --verbose=4 /Users/hong/.local/share/catdesk/runtime-next/bin/catdesk  # or runtime/bin/catdesk
-codesign -dv --verbose=4 /path/to/binary  # Identifier=com.hong.catdesk, Authority=CatDesk Local Code Signing, CDHash matches expected
-codesign -d -r - /path/to/binary          # designated => identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"
-shasum -a 256 /path/to/binary
-test ! -L /path/to/binary                  # must be physical file
-```
-
-Do not accept a binary based solely on `find-identity` listing text; the actual `codesign` verification and expected fingerprint/identifier/DR are required. Trust-policy wording variations do not invalidate the signature.
-
-### TCC cleanup policy
-
-Old versioned-path TCC rows (e.g., `0.5.0-custom.3` ad-hoc path) may remain as **stale cosmetic rows** until the user chooses a one-time cleanup. **Never** mutate `~/Library/Application Support/com.apple.TCC/TCC.db` via `sqlite3` or any direct DB write — that is unsupported and may corrupt TCC. Do **not** run or recommend any `tccutil reset` (global or service-scoped, e.g., `All`, `Accessibility`, `ScreenCapture`, `Automation`) for CatDesk cleanup; normal version updates MUST never perform any TCC cleanup/reset. If the user wants to clean stale entries, use **only** the supported System Settings UI (**System Settings → Privacy & Security**) to review/remove the stale versioned-path entry, then re-grant permissions interactively from the stable `runtime` path if needed. Unless the exact scope of a specific `tccutil reset <service> <client>` for that client/service has been independently verified on real hardware and is explicitly known not to reset current stable runtime permissions, it MUST NOT be recommended or executed for CatDesk cleanup. Cleanup is **not a release gate and not a production blocker**.
-
-### TCC migration lesson (one-time bootstrap)
-
-The first migration from the old ad-hoc/versioned-path (`~/.local/share/catdesk/<version>-custom/bin/catdesk`, ad-hoc `Identifier=catdesk-…`) to the stable signed runtime (`~/.local/share/catdesk/runtime/bin/catdesk`, `Identifier=com.hong.catdesk`, `DR=identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`) may trigger **one new macOS permission/TCC prompt** for the new stable identity. This is a **one-time bootstrap** — after the user grants it, future accepted versions MUST be promoted by **copying/signing to the same physical `runtime/bin/catdesk` path and reusing the same signing identity/Identifier/DR**. The launcher MUST never be pointed back to a versioned path after `runtime` is adopted, otherwise each version would again create a new TCC client.
-
-### Post-activation acceptance contract (PRODUCTION_ACCEPTED)
-
-Phase B `PRODUCTION_ACCEPTED` was granted only after all of the following passed (recorded as contract, without hard-coding PIDs):
-
-- **Ephemeral activation job:** `launchctl bootstrap` one-shot ran **exactly once** (`runs=1`, `exit 0`), then `launchctl bootout` cleanup by the reconnected ChatGPT.
-- **Process-level activation:** precise child replacement (`PPID==wrapper` + `exe==/Users/hong/.local/share/catdesk/runtime/bin/catdesk`), **30s triple stability** (wrapper PID + `runs` + stable child PID unchanged, `PPID`/`exe` still stable), and `nc -z 127.0.0.1 3200` TCP success.
-- **Post-activation acceptance by reconnected ChatGPT:** MCP `catdesk_instruction` discover + `run_command`/`search`/`write`/`delete`, workspace and ExpansionDrive write/search/delete, **write-root denial** and **outside-read-root denial** (path-boundary enforcement), append-only usage ledger continuity, and **Cloudflare continuity** all PASS. Only then `PRODUCTION_ACCEPTED`.
-
-Launcher sole target is the stable runtime; stable `codesign Identifier=com.hong.catdesk` on the same local certificate/DR; Cloudflare tunnel unchanged; read/write roots contract unchanged.
-
-### Troubleshooting note — dedicated `read` tool schema mismatch
-
-The dedicated `read` tool's schema `path` vs runtime `paths`/`CATDESK_READ_ROOTS` mismatch is a **pre-existing, non-blocking tool-surface issue**, not a stable-runtime or TCC regression. It is tracked separately and does not affect the Phase B `PRODUCTION_ACCEPTED` contract. Do not expand it into a new framework.
-
-## Required update workflow for Hermes
-
-When a new stable CatDesk release is approved for evaluation:
-
-1. Fetch/sync this repository, confirm local `main` matches `origin/main`, and read this README plus the repo-tracked `skills/catdesk-release-update/SKILL.md` before modifying anything.
-2. Confirm the local runtime skill entrypoint resolves to the repo-tracked skill, then confirm the current accepted downstream tag (`vX.Y.Z-custom.N`), clean repository state, and rollback version from tags/README — never from memory or an old worktree.
-3. Fetch official upstream tags and record the new tag, commit, release notes, and relevant schema/runtime changes.
-4. Start from the **new upstream stable tag**, not from a copy of old custom source files.
-5. Compare the current accepted downstream behavior with the new upstream architecture.
-6. Port only the **minimum custom behavior still required**. Never copy old source files wholesale over newer upstream source.
-7. Preserve all applicable new upstream features and adjust the downstream implementation to the new architecture.
-8. Freeze the upstream-based candidate commit and run formatting, the relevant upstream suite, and targeted downstream boundary/security tests against that exact revision.
-9. Freeze the candidate SHA and `origin/main` SHA. In a dedicated integration worktree/branch, merge those two exact revisions; resolve each conflict by combining the required upstream behavior and downstream contract, and preserve main-only files. Never choose one side wholesale merely to clear a conflict.
-10. Freeze the resulting integration commit `C`. On `C`, run formatting, the full Rust/upstream suite, Linux non-root tests, targeted workspace/read-write-root/traversal/symlink/change-tracking tests, usage-ledger contract tests, release-specific behavior checks, `scripts/tests/activate-controller-regression.sh`, and `git diff --check` from the new upstream base. Build a review-only candidate artifact from `C` in scratch; record upstream and source SHAs, official upstream digest (if applicable), and the actual custom artifact SHA-256 separately.
-11. Have the independent `auditor` review the exact integration SHA `C`, its complete downstream diff, candidate artifact, and measured results. Any source or artifact change invalidates that review: rerun affected gates and re-audit the new exact SHA. Do not tag while findings remain.
-12. Only after PASS, fast-forward downstream `main` to `C` and create the next source-accepted `vX.Y.Z-custom.N` tag at that same commit; then push the branch and tag. Verify local and remote `main` and `<tag>^{commit}` all resolve to `C`. If PR/rebase/other integration produces a different final SHA, run the gates and audit against that SHA before tagging. Make no source edits after tagging.
-13. Build the final artifact from the accepted tag into an isolated scratch location, verify its source provenance, and record its actual SHA-256 separately from the official upstream digest. A source-accepted tag is not `PRODUCTION_ACCEPTED`; scratch output is not an installed artifact.
-14. Before writing/installing a versioned artifact under `~/.local/share/catdesk/`, writing `runtime-next`, changing the stable runtime or launcher/plist, changing launchd state, or touching production config, obtain Hanqin-ge's explicit production deployment/activation approval. Authorization to evaluate or implement the upgrade is not activation approval.
-15. After approval, install the versioned artifact, retain the previous accepted version for rollback, then create `runtime-next` from the versioned artifact and sign/verify the stable identity. Do not promote to `runtime/bin` or change the launcher until the staged file passes all gates and independent audit.
-16. Before activation, timestamp-back up the prior production binary, launcher, and plist with a rollback recipe. Use atomic rename—not in-place overwrite—for the live binary. Preserve roots/environment; change only what the update requires; never rebuild or modify the Cloudflare tunnel as part of a CatDesk binary update.
-17. Activate only through the canonical stable-runtime procedure. After reconnecting ChatGPT, verify the active child and run all production-surface acceptance checks.
-18. If ExpansionDrive I/O, path security, or a required upstream feature fails, roll back to the previous accepted artifact and report **PARTIAL/FAIL**, never PASS. Mark `PRODUCTION_ACCEPTED` only after every Phase B check passes.
-
-## Production activation guardrails
-
-The 2026-08-31 `v0.5.0-custom.1` prepare/rollback incident established these mandatory controls:
-
-- Never submit an activation helper as a `KeepAlive` launchd service; it can create an unbounded restart/browser loop even when the binary itself is healthy.
-- Before activation, establish the owning launchd domain from `launchctl print`, `launchctl list`, and plist registration evidence. Do not hard-code `gui/<uid>` or `user/<uid>`; a missing service in a guessed domain is a domain/registration mismatch, not evidence of a v0.5 runtime regression.
-- Keep the foreground or one-shot controller outside the CatDesk process tree: snapshot launcher/plist hashes, change only the launcher target, provide self-contained backup/rollback recipe (launcher/plist snapshots + provenance), and kickstart only CatDesk. Controller **never auto-rolls-back** — rollback is an explicit external ChatGPT decision.
-- `launchctl kickstart -k` intentionally terminates the child. `SIGTERM` and Expect `spawn id ... not open` are restart evidence, not proof that the new binary crashed.
-- After restart, controller verifies only process-level gates: precise replacement child (PPID==wrapper + exe==stable runtime), 30s triple stability (wrapper PID + `runs` + stable child PID unchanged, PPID/exe still stable), and `nc -z 127.0.0.1 3200`. Health/discover, root invariants and Cloudflare continuity are **post-activation acceptance** by reconnected ChatGPT, not controller gates.
-- Local MCP and public ingress validation are post-activation acceptance (ChatGPT after reconnect). When Cloudflare is the active public path, a stale or legacy ngrok endpoint quota/error is only a stale probe: it is not production ingress evidence and must not drive rollback or any Cloudflare change.
-- Two-phase readiness: controller preflight PASS is `READY_FOR_PROCESS_ACTIVATION` (activation may proceed); controller success (precise child + 30s triple stability + TCP PASS, or `ALREADY_ACTIVE` idempotent PASS) is `READY_FOR_POST_ACTIVATION_ACCEPTANCE`; only after reconnected ChatGPT verifies MCP/command/Cloudflare/roots all PASS is `PRODUCTION_ACCEPTED`.
-
-## Stable runtime Phase B controller (2026-09-01 — remediation, process-level activation only)
-
-The first Phase B attempt failed due to two root causes: (1) a `launchctl submit` job was re-dispatched and re-ran uncontrollably; (2) the controller hard-coded `/health` and `/mcp` probes, which returned 404 for the real secret-routed endpoint and was mis-evaluated as binary health failure.
-
-Canonical Phase B controller contract (process-level activation only):
-
-- Controller never obtains the MCP secret slug and never performs MCP discover or command execution. It does not read `~/.catdesk/config.toml` slug/token.
-- `/health` and `/mcp` paths must never be hard-coded. HTTP 404 is not a controller binary-health failure; secret routes are outside controller scope.
-- `launchctl submit` is forbidden for activation one-shots. It can be re-dispatched by launchd.
-- When remote execution must survive the CatDesk process tree (ChatGPT→CatDesk→Hermes, where a foreground controller dies with CatDesk), use an **ephemeral `launchctl bootstrap` plist** proven by a harmless `run=1` probe: unique label `com.hong.catdesk.*`, `RunAtLoad=true`, `KeepAlive=false`, no `StartInterval`/`WatchPaths`/`StartCalendarInterval`, plist under restricted `~/.catdesk/activation/` (0700 dir, 0600 file), never under `~/Library/LaunchAgents`. After bootstrap the job must run exactly once; cleanup is `launchctl bootout <domain>/<label>` (or `bootout <domain> <plist>`) by the reconnected ChatGPT, never self-restarted by the controller.
-- Single-flight uses `/usr/bin/lockf` with `lockf -k -t 0` wrapper re-exec (macOS has no `flock`). Second concurrent instance must fail immediately with busy exit (e.g. 75, `already locked`), never queue.
-- Controller allows at most **one** `launchctl kickstart -k <resolved-domain>/com.hong.catdesk`, no retry loop, no auto-rollback. Any gate failure exits non-zero, preserves the private backup, and leaves the decision to the external ChatGPT.
-- Controller gates are process-level only: target path is physical file (not symlink), `codesign Identifier=com.hong.catdesk` and `DR` valid (`identifier "com.hong.catdesk" and certificate root = H"7f453106476b0da6b2fedbc4bc6f81b8c9aca51a"`), dynamically resolved launchd domain (`gui/<uid>` or `user/<uid>`, never hard-coded), launcher/plist existence, and `nc`/`TCP` tool availability for `nc -z 127.0.0.1 3200`. It must not `curl` `/health`/`/mcp`, must not read/output any slug.
-- After `--activate`, replacement verification is precise: resolve wrapper PID via `launchctl print <domain>/com.hong.catdesk`, then `ps -axo pid=,ppid=,command=` to find child where PPID==wrapper PID and first exe token precisely equals `$STABLE_RUNTIME`; plus post-restart triple 30s stability (wrapper PID + `runs` + stable child PID unchanged, PPID/exe still stable) and `nc -z 127.0.0.1 3200` success. Idempotency: if launcher already precisely stable and child already precisely stable, skip kickstart and directly do `ALREADY_ACTIVE` triple stability + TCP.
-- Post-activation **acceptance** (MCP discover, command execution, Cloudflare continuity, read/write roots/boundaries, ledger) is performed by ChatGPT after reconnecting with `catdesk_instruction` (new bootstrap); failure is judged externally, and rollback is an explicit external decision that re-signs/copies the previous accepted versioned artifact to the same `runtime/bin/catdesk` path.
-- Never record any secret slug, token, or tunnel credential in the repository, skill, script output, or logs.
-
-Canonical controller artifact: `scripts/activate-stable-runtime.sh` (`--preflight` by default, `--activate` explicit). The ephemeral bootstrap procedure for remote execution is documented here and in `skills/catdesk-release-update/SKILL.md`; no daemon/service is created.
-
-Ephemeral bootstrap for remote activation (when the controller must outlive CatDesk):
-
-```bash
-# 1. Harmless probe already proves run=1 semantics for this pattern — do not use launchctl submit.
-# 2. Create restricted staging: umask 077; mkdir -p ~/.catdesk/activation (0700)
-# 3. Write plist to ~/.catdesk/activation/com.hong.catdesk.activate.<timestamp>.plist (0600):
-#    Label=com.hong.catdesk.activate.<timestamp>, ProgramArguments=[/path/to/scripts/activate-stable-runtime.sh --activate],
-#    RunAtLoad=true, KeepAlive=false, no StartInterval/WatchPaths/StartCalendarInterval
-# 4. Resolve domain dynamically: gui/<uid> if launchctl print gui/<uid>/com.hong.catdesk succeeds else user/<uid>
-# 5. launchctl bootstrap <domain> <plist>  (unique label, runs exactly once)
-# 6. After reconnect, ChatGPT verifies replacement + 30s stability + nc -z 127.0.0.1 3200, then MCP/Cloudflare acceptance.
-# 7. Cleanup: launchctl bootout <domain>/<label> (or bootout <domain> <plist>); controller never self-bootouts or restarts.
-```
-
-## Acceptance checklist
-
-A downstream release is not accepted merely because it compiles. Acceptance has two separate phases.
-
-### Phase A — Source acceptance (before the accepted downstream tag)
-
-Run these checks against the frozen final integration commit `C`, which includes both the candidate and the frozen downstream `origin/main`. This phase is source-only: do not write/install a versioned production artifact, `runtime-next`, the stable runtime, launcher/plist, launchd state, or production config, and do not require live production probes.
-
-- formatting passes;
-- upstream test suite passes;
-- workspace read/write/edit/delete/search behavior passes;
-- explicitly allowed external read behavior passes;
-- explicitly allowed external write/edit/delete behavior passes;
-- a read-only external root cannot be written;
-- traversal and symlink escape attempts are rejected;
-- change tracking remains correct for canonical/external targets;
-- release-specific upstream API/schema/runtime behavior passes in isolated, non-production validation;
-- Linux non-root tests pass against the exact integration commit `C`;
-- `scripts/tests/activate-controller-regression.sh` passes in the test harness;
-- `git diff --check` passes for the upstream-base-to-`C` range, and candidate artifact provenance/hash are recorded;
-- the independent auditor returns PASS for the exact `C` and artifact under review;
-- all source-test temporary artifacts are removed.
-
-Only after Phase A checks and the independent audit pass may `main` be fast-forwarded and the accepted tag point to the exact audited commit `C`.
-
-### Phase B — Production acceptance (after explicit deployment approval and activation)
-
-Do not begin this phase until the source-accepted tag exists and Hanqin-ge has explicitly approved production deployment/activation. Verify the installed/staged artifact's signature and identity gates before promotion, then verify:
-
-- the active launchd child points to the physical stable runtime `/Users/hong/.local/share/catdesk/runtime/bin/catdesk` (the launcher's sole target; versioned artifacts are provenance/rollback source only, never a launcher target);
-- CatDesk does not enter a crash loop;
-- workspace CRUD/search, configured read/write roots, write-denial and outside-read-denial checks pass;
-- `/Volumes/ExpansionDrive` write/read/delete acceptance passes;
-- usage-ledger continuity and release-specific API/schema/runtime behavior pass;
-- Cloudflare tunnel continuity is unchanged;
-- all post-activation acceptance checks in the required update workflow pass and all temporary test artifacts are removed.
-
-Do not use Phase B evidence as a prerequisite for source-tag creation, and do not mark `PRODUCTION_ACCEPTED` until every Phase B check passes.
-
-## Provenance rules
-
-Never confuse upstream and downstream artifact identity.
-
-- The official upstream digest identifies the official upstream artifact.
-- The custom binary digest identifies the locally built downstream production artifact.
-- A successful upstream checksum does **not** prove that the official binary implements this repository's downstream contract.
-- Keep the accepted downstream Git tag as the canonical source-level provenance for each production custom build.
-
-## Never commit these items
-
-This repository must contain source and documentation, not production runtime state.
-
-Do **not** commit:
-
-- API keys, access tokens, cookies, credentials, tunnel secrets, or MCP path secrets;
-- `~/.catdesk/config.toml` or any real production config containing local credentials;
-- production launchd plist files or launch wrappers containing environment-specific runtime data;
-- Cloudflare/ngrok credentials or tunnel configuration;
-- runtime logs, `~/.catdesk/usage.jsonl`, restart markers, verification output, command job state, or generated mascot/state files;
-- `target/`, compiled binaries, `.dSYM` bundles, backups, temporary build output, or installed production binaries;
-- secrets copied into examples, issues, commit messages, or release notes.
-
-If deployment configuration must be documented later, use sanitized examples with placeholders only.
-
-## Git remotes
-
-The intended remote layout is:
+The canonical activation helper is:
 
 ```text
-origin   -> private downstream repository (HCH725/CatDesk-custom)
-upstream -> official public repository (Xeift/CatDesk)
+scripts/activate-stable-runtime.sh
 ```
 
-Never force-push `main` merely to align it with upstream. Upstream changes are integrated as a reviewed downstream release update.
+Its job is deliberately limited to process-level activation: backup, atomic promotion, one kickstart, child replacement verification, 30-second stability, and TCP 3200. It must not mutate Cloudflare or TCC and must not contain MCP secrets.
 
-## Build and test
+## Cloudflare
 
-Use the upstream Rust toolchain and project instructions. Do not carry any upstream formatting-only drift downstream. Verify the downstream custom Rust files with scoped rustfmt/check commands; accepted `v0.7.0-custom.1` measured (`cargo test`: 228 passed, 0 failed; `cargo test --release`: 228 passed, 0 failed), and the accepted `v0.9.0-custom.1` measured **239 passed / 0 failed** in both profiles (`change_tracking` is upstream-identical in this release and is still checked for drift):
+Cloudflare is the current public ingress and is intentionally independent of CatDesk source.
 
-```bash
-rustfmt --edition 2024 --check src/change_tracking/mod.rs src/mcp.rs src/state.rs src/workspace_tools.rs
-cargo check
-cargo test
-cargo test --release
-cargo build --release
-sh scripts/tests/activate-controller-regression.sh
+```text
+ChatGPT
+   ↓
+Cloudflare Tunnel
+   ↓
+localhost:3200
+   ↓
+CatDesk
 ```
 
-The activation-controller regression harness (`scripts/tests/activate-controller-regression.sh`) locks the audit-fixed controller behaviour: `--preflight` creates no activation state, changed bytes at the same stable path promote atomically with exactly one kickstart, identical bytes stay a no-op, and a missing staged artifact falls back with an explicit notice.
+An upstream CatDesk update must not replace Cloudflare with ngrok, edit the tunnel configuration, or treat Cloudflare as a downstream Rust patch.
 
-Accepted `v0.7.0-custom.1` keeps `src/handoff.rs` identical to upstream `v0.7.0`, and the accepted `v0.9.0-custom.1` keeps it identical to upstream `v0.9.0` (native `create_handoff`/Library recovery, no downstream customization). Release-specific and downstream boundary tests are additional requirements, not substitutes for the upstream suite.
+## 2026-09-27 thin-custom reconciliation
 
-## License and upstream attribution
+The production thin candidate was frozen as:
 
-This downstream repository retains the upstream MIT license and upstream copyright notice. CatDesk is originally developed by `xeift.eth` / Xeift and remains available at:
+```text
+9679f5b08825b39cb5587d5363ea0faf5f530224
+```
+
+Relative to upstream `v0.9.5`, its source delta is:
+
+```text
+src/mcp.rs             |  41 +++---
+src/workspace_tools.rs | 364 +++++++++++++++++++++++++++++++++++++++++++++++-
+2 files changed, 381 insertions(+), 24 deletions(-)
+```
+
+Measured validation before activation:
+
+- `cargo fmt --check`: PASS
+- `cargo check --all-targets`: PASS
+- Rust tests: **250/250 PASS**
+- real ExpansionDrive focused test: PASS
+- release build: PASS
+
+Production activation on 2026-09-27:
+
+- atomic runtime replacement: PASS
+- stable code-signing / DR: PASS
+- replacement child observed: PASS
+- 30-second triple stability: PASS
+- TCP 3200: PASS
+- ChatGPT MCP reconnect: PASS
+- external local read: PASS
+- ExpansionDrive write/read/delete: PASS
+- write outside configured write roots: correctly denied
+- browser bridge: PASS
+- Cloudflare continuity: PASS
+- rollback backup: `~/.catdesk/activation/backups/20260927-170554-67118`
+
+This release was reconciled into the private repository immediately after the user-approved production cutover. That ordering is a **one-time historical exception**. Future releases must follow the private-repo-first order defined above.
+
+## Repository hygiene
+
+- Do not commit runtime binaries, `runtime-next`, activation backups, credentials, tunnel secrets, cookies, TCC databases, or local signing private keys.
+- Do not maintain parallel implementations of behavior that upstream already provides.
+- Do not add monitoring, retry, watchdog, compatibility, or telemetry frameworks to CatDesk unless the core connector itself requires them.
+- Keep deployment scripts separate from Rust source customization.
+- Do not force-push `main` merely to align with upstream; integrate reviewed upstream releases as normal downstream commits/tags.
+
+## Upstream attribution and license
+
+This downstream repository is based on Xeift/CatDesk and retains the upstream license and attribution. Upstream project:
 
 https://github.com/Xeift/CatDesk
-
-This private repository exists only to maintain the local production customizations and their upgrade history.

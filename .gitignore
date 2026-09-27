@@ -2,21 +2,3 @@
 /npm/bin
 log.txt
 log_old.txt
-
-# Local developer/runtime state
-.DS_Store
-.env
-.env.*
-!.env.example
-.catdesk/
-
-# Build/debug artifacts
-*.dSYM/
-*.bak
-*.backup
-*.tmp
-
-# Local verification/runtime output
-verification.log
-verification.exit
-restart-complete

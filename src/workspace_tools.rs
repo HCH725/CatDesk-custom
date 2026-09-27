@@ -240,156 +240,91 @@ fn safe_limit(value: Option<usize>, default_value: usize, hard_max: usize) -> us
 }
 
 fn canonicalize_for_boundary(path: &Path) -> Result<PathBuf, String> {
-    if let Ok(canonical) = path.canonicalize() {
-        return Ok(command::normalize_windows_verbatim_path(canonical));
+    if let Ok(path) = path.canonicalize() {
+        return Ok(command::normalize_windows_verbatim_path(path));
     }
-    // Downstream contract §2: a not-yet-existing path is validated against the
-    // canonical form of its nearest existing ancestor, with the missing suffix
-    // re-attached afterwards. Looking only at the immediate parent rejects
-    // nested creates such as `<external-root>/new/deep/file.txt`.
     let mut missing = Vec::new();
-    let mut candidate = path;
-    while let Some(parent) = candidate.parent() {
-        let Some(component) = candidate.components().next_back() else {
-            break;
-        };
-        if matches!(
-            component,
-            std::path::Component::Prefix(_) | std::path::Component::RootDir
-        ) {
-            break;
+    let mut current = path;
+    while let Some(parent) = current.parent() {
+        if fs::symlink_metadata(current).is_ok() {
+            return Err(format!("Path cannot be resolved: {}", current.display()));
         }
-        if fs::symlink_metadata(candidate).is_ok() {
-            // A dangling symlink exists even when canonicalization fails; treating it as missing can allow a later write to follow it outside the configured roots.
-            return Err(format!("Path cannot be resolved: {}", candidate.display()));
-        }
+        let component = current
+            .components()
+            .next_back()
+            .ok_or_else(|| format!("Path cannot be resolved: {}", path.display()))?;
         missing.push(component.as_os_str().to_os_string());
-        if let Ok(canonical) = parent.canonicalize() {
-            let mut resolved = command::normalize_windows_verbatim_path(canonical);
+        if let Ok(ancestor) = parent.canonicalize() {
+            let mut resolved = command::normalize_windows_verbatim_path(ancestor);
             for component in missing.iter().rev() {
                 match Path::new(component).components().next() {
                     Some(std::path::Component::ParentDir) => {
                         resolved.pop();
                     }
                     Some(std::path::Component::CurDir) => {}
-                    _ => resolved.push(component.as_os_str()),
+                    _ => resolved.push(component),
                 }
             }
             return Ok(resolved);
         }
-        candidate = parent;
+        current = parent;
     }
     Err(format!("Path cannot be resolved: {}", path.display()))
 }
 
-fn configured_roots(variable: &str, alias: &str) -> Vec<PathBuf> {
-    std::env::var_os(variable)
-        .or_else(|| std::env::var_os(alias))
-        .map(|value| std::env::split_paths(&value).collect())
-        .unwrap_or_default()
-}
-
-fn resolve_under_roots(
-    workspace_root: &str,
-    path: &str,
-    roots: &[PathBuf],
-    kind: &str,
-) -> Result<PathBuf, String> {
+fn resolve_under_roots(workspace_root: &str, path: &Path, extra: &str) -> Result<PathBuf, String> {
     let workspace = workspace_root_path(workspace_root)?;
-    let candidate = if Path::new(path).is_absolute() {
-        PathBuf::from(path)
-    } else {
-        workspace.join(path)
-    };
-    let candidate = canonicalize_for_boundary(&candidate)?;
-    if roots.iter().any(|root| candidate.starts_with(root)) {
+    let candidate = canonicalize_for_boundary(&workspace.join(path))?;
+    // ponytail: read the short OS path-list per call, not a root registry;
+    // cache canonical roots only if profiling shows this boundary is hot.
+    let allowed = candidate.starts_with(&workspace)
+        || std::env::var_os(extra).is_some_and(|value| {
+            std::env::split_paths(&value)
+                .filter(|root| root.is_absolute())
+                .filter_map(|root| root.canonicalize().ok())
+                .map(command::normalize_windows_verbatim_path)
+                .any(|root| candidate.starts_with(root))
+        });
+    if allowed {
         Ok(candidate)
     } else {
-        Err(format!("Path escapes configured {kind} roots: {path}"))
+        Err(format!(
+            "Path escapes configured {extra} roots: {}",
+            path.display()
+        ))
     }
 }
 
 fn resolve_target_path(workspace_root: &str, path: &str) -> Result<PathBuf, String> {
-    let mut roots = vec![workspace_root_path(workspace_root)?];
-    if !Path::new(path).is_absolute() {
-        let candidate = command::resolve_workspace_path(workspace_root, Some(path))?;
-        return resolve_under_roots(
-            workspace_root,
-            &candidate.to_string_lossy(),
-            &roots,
-            "workspace",
-        );
-    }
-    roots.extend(
-        configured_roots("CATDESK_WRITE_ROOTS", "CATDESK_WRITE_ROOT")
-            .into_iter()
-            .filter_map(|root| {
-                root.canonicalize()
-                    .ok()
-                    .map(command::normalize_windows_verbatim_path)
-            }),
-    );
-    resolve_under_roots(workspace_root, path, &roots, "write")
+    resolve_under_roots(workspace_root, Path::new(path), "CATDESK_WRITE_ROOTS")
 }
 
-pub fn resolve_write_path_from_cwd(
-    workspace_root: &str,
-    cwd: &Path,
-    input: &str,
-) -> Result<PathBuf, String> {
-    let candidate = if Path::new(input).is_absolute() {
-        PathBuf::from(input)
-    } else {
-        cwd.join(input)
-    };
-    let mut roots = vec![workspace_root_path(workspace_root)?];
-    roots.extend(
-        configured_roots("CATDESK_WRITE_ROOTS", "CATDESK_WRITE_ROOT")
-            .into_iter()
-            .filter_map(|root| {
-                root.canonicalize()
-                    .ok()
-                    .map(command::normalize_windows_verbatim_path)
-            }),
-    );
-    let candidate = canonicalize_for_boundary(&candidate)?;
-    if roots.iter().any(|root| candidate.starts_with(root)) {
-        Ok(candidate)
-    } else {
-        Err(format!("Path escapes configured write roots: {input}"))
-    }
-}
-
-pub fn resolve_read_path(workspace_root: &str, input: Option<&str>) -> Result<PathBuf, String> {
-    let mut roots = vec![workspace_root_path(workspace_root)?];
-    roots.extend(
-        configured_roots("CATDESK_READ_ROOTS", "CATDESK_READ_ROOT")
-            .into_iter()
-            .filter_map(|root| {
-                root.canonicalize()
-                    .ok()
-                    .map(command::normalize_windows_verbatim_path)
-            }),
-    );
-    if roots.is_empty() {
-        return Err("No configured read roots are available".into());
-    }
-    let input = input.unwrap_or(".");
-    resolve_under_roots(workspace_root, input, &roots, "read")
+pub fn resolve_read_path(workspace_root: &str, path: Option<&str>) -> Result<PathBuf, String> {
+    resolve_under_roots(
+        workspace_root,
+        Path::new(path.unwrap_or(".")),
+        "CATDESK_READ_ROOTS",
+    )
 }
 
 pub fn resolve_read_path_from_cwd(
     workspace_root: &str,
     cwd: &Path,
-    input: Option<&str>,
+    path: Option<&str>,
 ) -> Result<PathBuf, String> {
-    let candidate = match input {
-        Some(value) if Path::new(value).is_absolute() => PathBuf::from(value),
-        Some(value) => cwd.join(value),
-        None => cwd.to_path_buf(),
-    };
-    let candidate = candidate.to_string_lossy();
-    resolve_read_path(workspace_root, Some(&candidate))
+    resolve_under_roots(
+        workspace_root,
+        &cwd.join(path.unwrap_or(".")),
+        "CATDESK_READ_ROOTS",
+    )
+}
+
+pub fn resolve_write_path_from_cwd(
+    workspace_root: &str,
+    cwd: &Path,
+    path: &str,
+) -> Result<PathBuf, String> {
+    resolve_under_roots(workspace_root, &cwd.join(path), "CATDESK_WRITE_ROOTS")
 }
 
 /// Planning and the read share this check so an unreadable path fails the same
@@ -1690,6 +1625,276 @@ mod tests {
         std::env::temp_dir().join(format!("catdesk-workspace-tools-{name}-{}", Uuid::new_v4()))
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn extra_roots_keep_read_write_and_mcp_boundaries() {
+        use crate::command_jobs::CommandJobManager;
+        use crate::mcp::{JsonRpcRequest, handle_request_with_show_detail_mode};
+        use crate::state::{Mode, ShowDetailMode, ToolMode};
+        use serde_json::json;
+        use std::os::unix::fs::symlink;
+
+        let base = if std::env::var_os("CATDESK_THIN_TEST_CHILD").is_some() {
+            PathBuf::from(std::env::var_os("CATDESK_THIN_TEST_BASE").unwrap())
+        } else {
+            test_workspace("thin-roots")
+        };
+        let workspace = base.join("workspace");
+        let local_read = base.join("local-read");
+        let blocked = base.join("blocked");
+        let external = if std::env::var_os("CATDESK_THIN_TEST_CHILD").is_some() {
+            PathBuf::from(std::env::var_os("CATDESK_THIN_TEST_EXTERNAL").unwrap())
+        } else {
+            std::env::var_os("CATDESK_THIN_TEST_DRIVE")
+                .map(|drive| PathBuf::from(drive).join(format!(".catdesk-thin-{}", Uuid::new_v4())))
+                .unwrap_or_else(|| base.join("external"))
+        };
+
+        if std::env::var_os("CATDESK_THIN_TEST_CHILD").is_none() {
+            for root in [&workspace, &local_read, &blocked, &external] {
+                fs::create_dir_all(root).expect("create isolated fixture");
+            }
+            let output = ProcessCommand::new(std::env::current_exe().expect("test executable"))
+                .args([
+                    "--exact",
+                    "workspace_tools::tests::extra_roots_keep_read_write_and_mcp_boundaries",
+                ])
+                .env("CATDESK_THIN_TEST_CHILD", "1")
+                .env("CATDESK_THIN_TEST_BASE", &base)
+                .env("CATDESK_THIN_TEST_EXTERNAL", &external)
+                .env(
+                    "CATDESK_READ_ROOTS",
+                    std::env::join_paths([&local_read, &external]).unwrap(),
+                )
+                .env(
+                    "CATDESK_WRITE_ROOTS",
+                    std::env::join_paths([&external]).unwrap(),
+                )
+                .output()
+                .expect("run boundary tests with isolated environment");
+            fs::remove_dir_all(&base).expect("remove local fixtures");
+            if !external.starts_with(&base) {
+                fs::remove_dir_all(&external).expect("remove external-drive fixture");
+            }
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let root = workspace.to_str().unwrap();
+        fs::write(local_read.join("local.txt"), "local source").unwrap();
+        fs::write(blocked.join("secret.txt"), "secret").unwrap();
+        symlink(&blocked, workspace.join("escape")).unwrap();
+        symlink(blocked.join("missing.txt"), workspace.join("dangling")).unwrap();
+        write_file(root, "workspace.txt", "workspace", false).unwrap();
+        assert_eq!(
+            read_files(root, &["workspace.txt".into()]).unwrap().files[0].text,
+            "workspace"
+        );
+        let local_path = local_read.join("local.txt").to_string_lossy().into_owned();
+        assert_eq!(
+            read_files(root, &[local_path.clone()]).unwrap().files[0].text,
+            "local source"
+        );
+        assert!(write_file(root, &local_path, "denied", false).is_err());
+        assert!(
+            edit_file(
+                root,
+                &local_path,
+                &[EditOperation::Replace {
+                    old_string: "local".into(),
+                    new_string: "mutated".into(),
+                    replace_all: false,
+                }]
+            )
+            .is_err()
+        );
+        assert!(delete_path(root, &local_path, false).is_err());
+        assert_eq!(fs::read_to_string(&local_path).unwrap(), "local source");
+
+        let drive_file = external.join("new/deep/drive.txt");
+        let drive_path = drive_file.to_string_lossy().into_owned();
+        write_file(root, &drive_path, "drive before", true).unwrap();
+        assert_eq!(
+            read_files(root, &[drive_path.clone()]).unwrap().files[0].text,
+            "drive before"
+        );
+        let listing = list_files_filtered(
+            root,
+            external.to_str(),
+            false,
+            None,
+            command::FileListingFilter::All,
+        )
+        .unwrap();
+        assert!(
+            listing
+                .entries
+                .iter()
+                .any(|entry| entry.name == "drive.txt")
+        );
+        let result = search_text(
+            root,
+            SearchTextOptions {
+                pattern: "drive before",
+                path: Some(external.to_str().unwrap()),
+                glob: None,
+                fixed_strings: true,
+                case_insensitive: false,
+                context: None,
+                before: None,
+                after: None,
+                max_matches: None,
+                max_matches_per_file: None,
+                include_hidden: false,
+                no_ignore: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.match_count, 1);
+        edit_file(
+            root,
+            &drive_path,
+            &[EditOperation::Replace {
+                old_string: "before".into(),
+                new_string: "after".into(),
+                replace_all: false,
+            }],
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(&drive_file).unwrap(), "drive after");
+
+        let secret = blocked.join("secret.txt").to_string_lossy().into_owned();
+        assert!(
+            read_files(root, &[secret.clone()]).unwrap().files[0]
+                .error
+                .is_some()
+        );
+        assert!(write_file(root, &secret, "denied", false).is_err());
+        assert!(write_file(root, "escape/new.txt", "denied", true).is_err());
+        assert!(write_file(root, "dangling", "denied", true).is_err());
+        assert!(
+            read_files(root, &["escape/secret.txt".into()])
+                .unwrap()
+                .files[0]
+                .error
+                .is_some()
+        );
+        assert!(write_file(root, "new/../../blocked/missing.txt", "denied", true).is_err());
+        assert!(!blocked.join("missing.txt").exists());
+        assert!(move_path(root, &local_path, &drive_path, false, false).is_err());
+
+        let request = |method: &str, name: &str, arguments: serde_json::Value| JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: method.into(),
+            params: if name.is_empty() {
+                json!({})
+            } else {
+                json!({"name": name, "arguments": arguments})
+            },
+        };
+        let jobs = CommandJobManager::new();
+        let call = |req: JsonRpcRequest| {
+            let jobs = &jobs;
+            async move {
+                handle_request_with_show_detail_mode(
+                    &req,
+                    root,
+                    1,
+                    None,
+                    Mode::Both,
+                    ToolMode::MultiTools,
+                    false,
+                    false,
+                    false,
+                    true,
+                    jobs,
+                    &None,
+                    ShowDetailMode::Collapsed,
+                )
+                .await
+                .unwrap()
+            }
+        };
+        assert!(
+            call(request("server/discover", "", json!({})))
+                .await
+                .result
+                .is_some()
+        );
+        let tools = call(request("tools/list", "", json!({}))).await;
+        assert!(
+            tools.result.unwrap()["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == "read")
+        );
+        let read = call(request(
+            "tools/call",
+            "read",
+            json!({"paths": [local_path]}),
+        ))
+        .await;
+        assert_eq!(
+            read.result.unwrap()["structuredContent"]["files"][0]["text"],
+            "local source"
+        );
+        let list = call(request(
+            "tools/call",
+            "run_command",
+            json!({"command": "ls -Ra .", "cwd": external}),
+        ))
+        .await;
+        assert!(
+            list.result.unwrap()["structuredContent"]["stdout"]
+                .as_str()
+                .unwrap()
+                .contains("drive.txt")
+        );
+        let mcp_file = external.join("mcp.txt");
+        let write = call(request(
+            "tools/call",
+            "write",
+            json!({"path": mcp_file, "content": "mcp file"}),
+        ))
+        .await;
+        let result = write.result.unwrap();
+        assert_ne!(result["isError"], true);
+        assert_eq!(
+            result["_meta"]["catdesk/widgetPayload"]["changedFiles"][0]["path"],
+            mcp_file.canonicalize().unwrap().to_str().unwrap()
+        );
+        let denied_write = call(request(
+            "tools/call",
+            "write",
+            json!({"path": local_read.join("blocked.txt"), "content": "denied"}),
+        ))
+        .await;
+        assert_eq!(denied_write.result.unwrap()["isError"], true);
+        assert!(!local_read.join("blocked.txt").exists());
+        let denied_read = call(request(
+            "tools/call",
+            "read",
+            json!({"paths": [blocked.join("secret.txt")]}),
+        ))
+        .await;
+        assert_eq!(denied_read.result.unwrap()["isError"], true);
+        let denied = call(request("tools/call", "run_command", json!({"command": format!("mv {} {}", local_read.join("local.txt").display(), drive_file.display())}))).await;
+        assert_eq!(denied.result.unwrap()["isError"], true);
+
+        let moved = external.join("new/deep/moved.txt");
+        move_path(root, &drive_path, moved.to_str().unwrap(), false, false).unwrap();
+        delete_path(root, moved.to_str().unwrap(), false).unwrap();
+        assert!(!moved.exists());
+    }
+
     #[test]
     fn rust_search_backend_supports_regex_glob_and_context() {
         let workspace_root = test_workspace("search-rust");
@@ -1901,266 +2106,6 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(workspace_root);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn extra_roots_keep_read_and_write_boundaries_and_symlink_escape_blocked() {
-        use std::os::unix::fs::symlink;
-
-        let workspace = test_workspace("roots-workspace");
-        let external = test_workspace("roots-external");
-        let read_only = test_workspace("roots-read-only");
-        let blocked = test_workspace("roots-blocked");
-        fs::create_dir_all(&workspace).expect("workspace");
-        fs::create_dir_all(&external).expect("external");
-        fs::create_dir_all(&read_only).expect("read-only");
-        fs::create_dir_all(&blocked).expect("blocked");
-        fs::write(external.join("allowed.txt"), "allowed").expect("fixture");
-        fs::write(read_only.join("read-only.txt"), "read-only").expect("read-only fixture");
-        fs::write(blocked.join("secret.txt"), "secret").expect("fixture");
-        symlink(&blocked, workspace.join("escape")).expect("symlink");
-
-        let workspace_root = workspace.canonicalize().expect("canonical workspace");
-        let external_root = external.canonicalize().expect("canonical external");
-        let read_only_root = read_only.canonicalize().expect("canonical read-only");
-        let blocked_root = blocked.canonicalize().expect("canonical blocked");
-        let read_roots = vec![
-            workspace_root.clone(),
-            external_root.clone(),
-            read_only_root.clone(),
-        ];
-        let write_roots = vec![workspace_root.clone(), external_root.clone()];
-        let workspace_str = workspace.to_string_lossy();
-
-        assert!(
-            resolve_under_roots(&workspace_str, "escape/new.txt", &read_roots, "read").is_err()
-        );
-        assert!(
-            resolve_under_roots(&workspace_str, "escape/new.txt", &write_roots, "write").is_err()
-        );
-        assert!(
-            resolve_under_roots(
-                &workspace_str,
-                external.join("allowed.txt").to_str().unwrap(),
-                &read_roots,
-                "read"
-            )
-            .is_ok()
-        );
-        assert!(
-            resolve_under_roots(
-                &workspace_str,
-                read_only.join("read-only.txt").to_str().unwrap(),
-                &read_roots,
-                "read"
-            )
-            .is_ok()
-        );
-        assert!(
-            resolve_under_roots(
-                &workspace_str,
-                read_only.join("read-only.txt").to_str().unwrap(),
-                &write_roots,
-                "write"
-            )
-            .is_err()
-        );
-        assert!(
-            resolve_under_roots(
-                &workspace_str,
-                external.join("new.txt").to_str().unwrap(),
-                &write_roots,
-                "write"
-            )
-            .is_ok()
-        );
-        assert!(
-            resolve_under_roots(
-                &workspace_str,
-                blocked.join("secret.txt").to_str().unwrap(),
-                &read_roots,
-                "read"
-            )
-            .is_err()
-        );
-        assert!(
-            resolve_under_roots(
-                &workspace_str,
-                blocked.join("secret.txt").to_str().unwrap(),
-                &write_roots,
-                "write"
-            )
-            .is_err()
-        );
-        assert!(resolve_under_roots(&workspace_str, "notes.txt", &read_roots, "read").is_ok());
-        assert!(resolve_under_roots(&workspace_str, "notes.txt", &write_roots, "write").is_ok());
-
-        assert!(blocked_root.starts_with("/"));
-        let _ = fs::remove_dir_all(workspace);
-        let _ = fs::remove_dir_all(external);
-        let _ = fs::remove_dir_all(read_only);
-        let _ = fs::remove_dir_all(blocked);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn write_rejects_dangling_symlink_to_missing_external_path() {
-        use std::os::unix::fs::symlink;
-
-        let workspace = test_workspace("dangling-link-workspace");
-        let blocked = test_workspace("dangling-link-blocked");
-        fs::create_dir_all(&workspace).expect("create workspace");
-        fs::create_dir_all(&blocked).expect("create blocked root");
-        let workspace_root = workspace.to_string_lossy().into_owned();
-        let outside_target = blocked.join("not-created-yet");
-        let dangling_link = workspace.join("escape");
-        symlink(&outside_target, &dangling_link).expect("create dangling symlink");
-
-        let target_string = dangling_link.to_string_lossy().into_owned();
-        let result = write_file(&workspace_root, &target_string, "must stay inside", true);
-        let wrote_outside = outside_target.exists();
-
-        let _ = fs::remove_dir_all(&workspace);
-        let _ = fs::remove_dir_all(&blocked);
-
-        assert!(
-            result.is_err(),
-            "a dangling symlink must not turn a missing outside target into an allowed workspace path"
-        );
-        assert!(!wrote_outside, "write escaped through a dangling symlink");
-    }
-
-    #[test]
-    fn write_rejects_relative_missing_path_traversal() {
-        let base = test_workspace("relative-missing-traversal");
-        let workspace = base.join("workspace");
-        let outside = base.join("outside");
-        let inside = workspace.join("inside");
-        fs::create_dir_all(&workspace).expect("create workspace");
-        fs::create_dir_all(&outside).expect("create outside directory");
-        fs::create_dir_all(&inside).expect("create inside directory");
-        let workspace_root = workspace.to_string_lossy().into_owned();
-        let relative_target = Path::new("new-dir")
-            .join("..")
-            .join("..")
-            .join("outside")
-            .join("escaped.txt")
-            .to_string_lossy()
-            .into_owned();
-        let in_workspace_target = Path::new("new-dir")
-            .join("..")
-            .join("inside")
-            .join("accepted.txt")
-            .to_string_lossy()
-            .into_owned();
-
-        let result = write_file(&workspace_root, &relative_target, "must stay inside", true);
-        let inside_result = write_file(&workspace_root, &in_workspace_target, "inside", true);
-        let wrote_outside = outside.join("escaped.txt").exists();
-        let wrote_inside = matches!(
-            fs::read_to_string(inside.join("accepted.txt")).as_deref(),
-            Ok("inside")
-        );
-
-        let _ = fs::remove_dir_all(&base);
-
-        assert!(
-            !wrote_outside,
-            "relative missing target wrote outside the workspace (result: {result:?})"
-        );
-        assert!(
-            result.is_err(),
-            "relative missing targets must not traverse outside the workspace"
-        );
-        assert!(
-            inside_result.is_ok(),
-            "relative missing targets resolving inside the workspace remain writable"
-        );
-        assert!(wrote_inside, "relative in-workspace target was not written");
-    }
-
-    #[test]
-    fn external_root_targets_keep_accurate_before_after_tracking() {
-        use crate::change_tracking::{ChangeScope, ChangeSession, ChangeTarget};
-
-        // Downstream contract §3: change tracking must stay accurate for targets
-        // in explicitly allowed external roots. The MCP layer canonicalizes those
-        // targets (resolve_write_path_from_cwd / resolve_read_path) before they
-        // enter change tracking; the session must report the external change.
-        let workspace = test_workspace("tracking-workspace");
-        let external = test_workspace("tracking-external");
-        fs::create_dir_all(&workspace).expect("workspace");
-        fs::create_dir_all(&external).expect("external");
-        let external_root = external.canonicalize().expect("canonical external");
-        let target = external_root.join("artifact.txt");
-        fs::write(&target, "before\n").expect("fixture");
-
-        let session = ChangeSession::begin(
-            &workspace,
-            ChangeScope::single(ChangeTarget::explicit(target.clone(), false)),
-        );
-        fs::write(&target, "after\n").expect("change external target");
-
-        let changes = session.changes();
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0].path, target.display().to_string());
-        assert_eq!(changes[0].added, 1);
-        assert_eq!(changes[0].removed, 1);
-
-        let _ = fs::remove_dir_all(workspace);
-        let _ = fs::remove_dir_all(external);
-    }
-
-    #[test]
-    fn nested_missing_external_paths_resolve_via_nearest_existing_ancestor() {
-        let workspace = test_workspace("nested-workspace");
-        let external = test_workspace("nested-external");
-        let blocked = test_workspace("nested-blocked");
-        fs::create_dir_all(&workspace).expect("workspace");
-        fs::create_dir_all(&external).expect("external");
-        fs::create_dir_all(&blocked).expect("blocked");
-        let workspace_root = workspace.canonicalize().expect("canonical workspace");
-        let external_root = external.canonicalize().expect("canonical external");
-        let write_roots = vec![workspace_root.clone(), external_root.clone()];
-        let workspace_str = workspace.to_string_lossy();
-
-        // Contract §2: nested missing paths canonicalize the nearest existing parent.
-        let resolved = resolve_under_roots(
-            &workspace_str,
-            external.join("new/deep/file.txt").to_str().unwrap(),
-            &write_roots,
-            "write",
-        )
-        .expect("nested missing external parent must resolve");
-        assert_eq!(resolved, external_root.join("new/deep/file.txt"));
-
-        // Escapes through missing nested paths stay rejected.
-        assert!(
-            resolve_under_roots(
-                &workspace_str,
-                blocked.join("new/deep/file.txt").to_str().unwrap(),
-                &write_roots,
-                "write"
-            )
-            .is_err()
-        );
-        assert!(
-            resolve_under_roots(
-                &workspace_str,
-                external
-                    .join("../nested-blocked/secret.txt")
-                    .to_str()
-                    .unwrap(),
-                &write_roots,
-                "write"
-            )
-            .is_err()
-        );
-
-        let _ = fs::remove_dir_all(workspace);
-        let _ = fs::remove_dir_all(external);
-        let _ = fs::remove_dir_all(blocked);
     }
 
     #[test]
