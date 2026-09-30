@@ -7949,6 +7949,18 @@
           );
         }
 
+        function toolResultMetadataFromMessage(message) {
+          if (!message || message.method !== "ui/notifications/tool-result") {
+            return null;
+          }
+          var toolResult = message.params;
+          var toolResponseMetadata =
+            toolResult && typeof toolResult === "object" ? toolResult._meta : null;
+          return toolResponseMetadata && typeof toolResponseMetadata === "object"
+            ? toolResponseMetadata
+            : null;
+        }
+
         function applyPayload(toolResponseMetadata) {
           var root = document.getElementById("root");
           if (!root) return false;
@@ -8005,8 +8017,21 @@
           if (event.source !== window.parent) return;
           var message = event.data;
           if (!message || typeof message !== "object") return;
+          if (message.id === "catdesk-mcp-app-initialize" && message.result) {
+            window.parent.postMessage(
+              {
+                jsonrpc: "2.0",
+                method: "ui/notifications/initialized",
+              },
+              "*",
+            );
+            return;
+          }
           if (message.method === "ui/notifications/tool-result") {
-            var toolResponseMetadata = currentToolResponseMetadata();
+            var toolResponseMetadata = toolResultMetadataFromMessage(message);
+            if (!hasPureMetaPayload(toolResponseMetadata)) {
+              toolResponseMetadata = currentToolResponseMetadata();
+            }
             if (!hasPureMetaPayload(toolResponseMetadata)) return;
             applyPayload(toolResponseMetadata);
           }
@@ -8036,6 +8061,21 @@
         var initialToolResponseMetadata = currentToolResponseMetadata();
         if (hasPureMetaPayload(initialToolResponseMetadata)) {
           applyPayload(initialToolResponseMetadata);
+        }
+        if (window.parent !== window) {
+          window.parent.postMessage(
+            {
+              jsonrpc: "2.0",
+              id: "catdesk-mcp-app-initialize",
+              method: "ui/initialize",
+              params: {
+                protocolVersion: "2026-01-26",
+                appInfo: { name: "CatDesk Review", version: "0.9.5" },
+                appCapabilities: {},
+              },
+            },
+            "*",
+          );
         }
       })();
     </script>

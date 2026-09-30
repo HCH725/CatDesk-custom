@@ -5071,6 +5071,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn mcp_app_widget_lifecycle_and_standard_tool_result_metadata_are_wired() {
+        assert!(CATDESK_WIDGET_HTML.contains("method: \"ui/initialize\""));
+        assert!(CATDESK_WIDGET_HTML.contains("protocolVersion: \"2026-01-26\""));
+        assert!(CATDESK_WIDGET_HTML.contains("method: \"ui/notifications/initialized\""));
+        assert!(CATDESK_WIDGET_HTML.contains("function toolResultMetadataFromMessage(message)"));
+        assert!(CATDESK_WIDGET_HTML.contains("var toolResult = message.params;"));
+        assert!(CATDESK_WIDGET_HTML.contains("? toolResult._meta : null;"));
+        assert!(
+            CATDESK_WIDGET_HTML
+                .contains("var toolResponseMetadata = toolResultMetadataFromMessage(message);")
+        );
+        assert!(CATDESK_WIDGET_HTML.contains("applyPayload(toolResponseMetadata);"));
+        assert!(CATDESK_WIDGET_HTML.contains("window.openai.toolResponseMetadata || null;"));
+    }
+
     #[tokio::test]
     async fn browser_only_mode_can_call_catdesk_instruction() {
         let workspace_root = std::env::temp_dir().join(format!(
