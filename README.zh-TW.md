@@ -6,7 +6,7 @@
 
 設計原則刻意保持很窄：
 
-> **官方 Xeift/CatDesk upstream + 最小必要的外部檔案路徑 patch**
+> **官方 Xeift/CatDesk upstream + 最小必要的外部檔案路徑 patch + 可選的薄層 OpenAI MCP Apps 相容能力**
 
 Cloudflare、launchd、code signing、正式啟用流程都屬於部署層，不算 CatDesk source custom。
 
@@ -21,11 +21,12 @@ Cloudflare、launchd、code signing、正式啟用流程都屬於部署層，不
 - **目前 production SHA256：** `8c98eb715a9366ce5c3cc3725de609dbd27575916bca33ec05c7f861586612fe`
 - **固定簽署 Identifier：** `com.hong.catdesk`
 - **Public ingress：** Cloudflare Tunnel，獨立於 CatDesk source 維護
-- **目前相對 upstream 的 source delta：** 只有兩個 Rust 檔：
+- **目前已接受的 production source delta：** 只有兩個 Rust 檔：
   - `src/mcp.rs`
   - `src/workspace_tools.rs`
+- **OpenAI MCP Apps 相容 candidate：** 可額外修改 `src/widget/catdesk_dashboard.html`，但僅限 ChatGPT entrypoint 所必需的最小標準 UI lifecycle / result bridge。
 
-除非未來 upstream 架構改變、且確實需要不同的最小實作，其他 CatDesk source 都應保持與 upstream 一致。
+除非未來 upstream 架構改變、且確實需要不同的最小實作，其他 CatDesk source 都應保持與 upstream 一致。OpenAI 相容層必須維持 additive：Standard MCP、Hermes client、transport 與 filesystem semantics 都不得依賴它。
 
 ## 為什麼需要這個 private repo
 
@@ -49,7 +50,7 @@ CATDESK_WRITE_ROOTS=/Volumes/ExpansionDrive
 - 超出允許 roots 的路徑必須拒絕；
 - `/Volumes/ExpansionDrive` 必須能真實讀寫。
 
-這就是目前唯一長期保留的 CatDesk source customization。
+外部檔案路徑契約仍是主要長期 CatDesk source customization。另允許一個可選、薄層的 OpenAI MCP Apps 相容能力：僅包含 namespaced OpenAI entrypoint metadata，以及 ChatGPT 所需的最小 widget lifecycle / result bridge。不得把 `openai/mcp-extensions` 整包 vendor 進 repo、不得新增平行 framework，也不得讓 Standard MCP / Hermes 依賴這一層。
 
 ## 明確不屬於 CatDesk source custom
 
@@ -107,9 +108,9 @@ README 是 behavioral contract。
 1. Fetch `origin` 與 `upstream`，確認 local `main == origin/main`，worktree clean。
 2. 閱讀 upstream release notes，盤點 API/schema/runtime 變化。
 3. 從新的 upstream stable tag/commit 建立乾淨 candidate。
-4. 只移植仍然必要的 external roots 能力，不得整份複製舊 custom source。
+4. 只移植仍然必要的 external roots 能力；若 OpenAI MCP Apps 相容層仍有必要，也只保留其最小實作。不得整份複製舊 custom source。
 5. 若 upstream 已吸收某項行為，直接刪掉 downstream 實作。
-6. 檢查 downstream source diff。預設應只有 `src/mcp.rs` 與 `src/workspace_tools.rs`；新增其他 source file 必須有明確理由。
+6. 檢查 downstream source diff。預設為 `src/mcp.rs` 與 `src/workspace_tools.rs`；只有在 OpenAI MCP Apps 相容層啟用時，才額外允許 `src/widget/catdesk_dashboard.html`，且 review record 必須證明改動僅限標準 UI lifecycle / result handling。其他 source file 一律需要明確理由。
 7. 執行 source validation：
    - `cargo fmt --all -- --check`
    - `cargo check --all-targets`

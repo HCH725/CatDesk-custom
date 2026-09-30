@@ -6,7 +6,7 @@ Maintain `HCH725/CatDesk-custom` as a deliberately thin downstream of `Xeift/Cat
 
 The standing source contract is:
 
-> **upstream CatDesk + minimum controlled external read/write roots**
+> **upstream CatDesk + minimum controlled external read/write roots + optional thin OpenAI MCP Apps compatibility**
 
 Do not redesign CatDesk. Do not add unrelated telemetry, monitoring, retry, or deployment concerns to Rust core.
 
@@ -45,6 +45,14 @@ src/mcp.rs
 src/workspace_tools.rs
 ```
 
+When the optional OpenAI MCP Apps compatibility layer is enabled, one additional source file is allowed:
+
+```text
+src/widget/catdesk_dashboard.html
+```
+
+That third file is limited to the minimum standards-compliant widget lifecycle/result bridge needed by OpenAI/ChatGPT entrypoints. Standard MCP and Hermes clients must continue to work without depending on this layer.
+
 Required runtime policy:
 
 ```text
@@ -64,6 +72,8 @@ Required semantics:
 - `/Volumes/ExpansionDrive` must pass real I/O testing.
 
 If a future upstream release implements the same capability natively, delete the downstream patch rather than maintaining duplicate code.
+
+For OpenAI MCP Apps compatibility, do not vendor the `openai/mcp-extensions` repository, add a new adapter/manager framework, or alter transport/runtime behavior. Prefer namespaced metadata in existing MCP descriptors and the smallest possible bridge inside the existing widget.
 
 ## Explicit non-goals
 
@@ -99,9 +109,9 @@ Never start from an old candidate worktree or copy old custom files wholesale.
 ## Build the thin candidate
 
 1. Create a clean branch/worktree from the new upstream stable tag.
-2. Reapply only the external-root contract.
+2. Reapply only the external-root contract and, if still required, the optional OpenAI MCP Apps compatibility layer.
 3. Prefer adapting existing upstream functions/types instead of adding abstractions.
-4. Preserve upstream MCP, state, browser, DevTools, command execution, and platform behavior unless the roots feature strictly requires a change.
+4. Preserve upstream MCP, state, browser, DevTools, command execution, and platform behavior unless the roots feature or the explicitly accepted OpenAI UI compatibility layer strictly requires a change.
 5. Check the diff against the new upstream base.
 
 Default expectation:
@@ -110,14 +120,20 @@ Default expectation:
 git diff --name-status <upstream-tag>...HEAD
 ```
 
-should show only:
+should normally show:
 
 ```text
 M src/mcp.rs
 M src/workspace_tools.rs
 ```
 
-Any additional Rust source file requires explicit justification in the review record.
+If OpenAI MCP Apps compatibility is enabled, this third source file is also permitted:
+
+```text
+M src/widget/catdesk_dashboard.html
+```
+
+Its diff must remain limited to standards-compliant widget lifecycle/result handling. Any other source file requires explicit justification in the review record.
 
 ## Source validation
 
@@ -141,6 +157,7 @@ Also run focused tests that prove:
 - traversal is denied;
 - symlink escape is denied;
 - MCP tool discovery/calls still work;
+- when OpenAI MCP Apps compatibility is enabled: Global/Thread entrypoint metadata is valid, widget `ui/initialize` → `ui/notifications/initialized` works, standard `ui/notifications/tool-result` consumes `params._meta`, and legacy compatibility remains intact;
 - browser/DevTools source remains upstream-compatible;
 - real `/Volumes/ExpansionDrive` I/O succeeds.
 
