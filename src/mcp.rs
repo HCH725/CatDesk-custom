@@ -2640,6 +2640,20 @@ fn ensure_tool_descriptor_widget_template_with_show_detail_mode(
         .entry("_meta".to_string())
         .or_insert_with(|| json!({}));
     ensure_output_template_meta_with_uri(meta_value, &resource_uri);
+
+    if name == "catdesk_instruction" {
+        if let Some(meta_obj) = meta_value.as_object_mut() {
+            meta_obj.insert(
+                "openai/ui".to_string(),
+                json!({
+                    "entrypoints": [
+                        { "type": "global" },
+                        { "type": "thread" }
+                    ]
+                }),
+            );
+        }
+    }
 }
 
 fn extract_tool_result_text(result: &Value) -> String {
@@ -4836,6 +4850,38 @@ mod tests {
                 "output template should include initial tool name for {name}: {output_template}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn catdesk_instruction_exposes_openai_global_and_thread_entrypoints() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!("req-tools-list")),
+            method: "tools/list".into(),
+            params: json!({}),
+        };
+
+        let response = handle_tools_list(&req, Mode::Both, ToolMode::MultiTools, &None).await;
+        let tools = response
+            .result
+            .as_ref()
+            .and_then(|result| result.get("tools"))
+            .and_then(Value::as_array)
+            .expect("missing tools");
+        let instruction = tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(Value::as_str) == Some("catdesk_instruction"))
+            .expect("missing catdesk_instruction");
+
+        let entrypoints = instruction
+            .get("_meta")
+            .and_then(|meta| meta.get("openai/ui"))
+            .and_then(|ui| ui.get("entrypoints"))
+            .and_then(Value::as_array)
+            .expect("missing openai/ui entrypoints");
+
+        assert!(entrypoints.iter().any(|entry| entry.get("type").and_then(Value::as_str) == Some("global")));
+        assert!(entrypoints.iter().any(|entry| entry.get("type").and_then(Value::as_str) == Some("thread")));
     }
 
     #[tokio::test]
