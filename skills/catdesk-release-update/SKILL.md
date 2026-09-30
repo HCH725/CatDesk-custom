@@ -280,14 +280,17 @@ Do not alter Cloudflare or reset TCC as part of normal rollback.
 
 ## Current accepted release
 
-As of 2026-09-27:
+As of 2026-09-30:
 
 - upstream: `v0.9.5` / `f4f4bcc6a14b87f00d17f102f3006dfd96c0b341`
-- downstream: `v0.9.5-custom.2`
-- deployed thin candidate provenance: `9679f5b08825b39cb5587d5363ea0faf5f530224`
-- production SHA256: `8c98eb715a9366ce5c3cc3725de609dbd27575916bca33ec05c7f861586612fe`
-- source delta: `src/mcp.rs`, `src/workspace_tools.rs` only
+- downstream source tag: `v0.9.5-custom.3`
+- accepted downstream commit: `194368de301586b7871aaa567bc793cee24979c7`
+- production SHA256: `4b6130e3deaa0e7316a9c8d5e33c2cb420a1f5be5980b9e1716c358764212d1b`
+- source delta: `src/mcp.rs`, `src/workspace_tools.rs`, plus the narrowly-scoped `src/widget/catdesk_dashboard.html` OpenAI MCP Apps bridge
+- OpenAI MCP Apps: Global/Thread entrypoint metadata, standard initialize/initialized lifecycle, standard `params._meta` result ingestion, and legacy fallback validated
+- production acceptance: ChatGPT connector reconnect PASS; external Mac read PASS; ExpansionDrive write/read/delete PASS; write-root denial PASS; browser bridge PASS; Cloudflare continuity PASS; codesign/DR PASS; 30-second PID/runs stability PASS; TCP 3200 PASS
+- ChatGPT UI-chrome rendering of Global/Thread surfaces is not directly observable through assistant tool calls and remains a UI-only confirmation
 - usage ledger/telemetry customization: intentionally removed
 - Cloudflare: unchanged, deployment layer only
 
-The 2026-09-27 cutover happened before this private-repo reconciliation by explicit owner direction. Treat that ordering as historical only. **All future upgrades are private-repo-first.**
+The 2026-09-27 cutover happened before private-repo reconciliation by explicit owner direction and remains a historical exception. The 2026-09-30 `v0.9.5-custom.3` deployment followed the required private-repo-first sequence. **All future upgrades remain private-repo-first.**

@@ -16,15 +16,17 @@ Cloudflare、launchd、code signing、正式啟用流程都屬於部署層，不
 - **Private downstream：** https://github.com/HCH725/CatDesk-custom
 - **目前接受的 upstream release：** `v0.9.5`
 - **目前 upstream commit：** `f4f4bcc6a14b87f00d17f102f3006dfd96c0b341`
-- **目前 downstream release：** `v0.9.5-custom.2`
+- **目前 downstream release：** `v0.9.5-custom.3`
+- **目前 downstream commit：** `194368de301586b7871aaa567bc793cee24979c7`
 - **Production runtime：** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`
-- **目前 production SHA256：** `8c98eb715a9366ce5c3cc3725de609dbd27575916bca33ec05c7f861586612fe`
+- **目前 production SHA256：** `4b6130e3deaa0e7316a9c8d5e33c2cb420a1f5be5980b9e1716c358764212d1b`
 - **固定簽署 Identifier：** `com.hong.catdesk`
 - **Public ingress：** Cloudflare Tunnel，獨立於 CatDesk source 維護
-- **目前已接受的 production source delta：** 只有兩個 Rust 檔：
+- **目前已接受的 production source delta：**
   - `src/mcp.rs`
   - `src/workspace_tools.rs`
-- **OpenAI MCP Apps 相容 candidate：** 可額外修改 `src/widget/catdesk_dashboard.html`，但僅限 ChatGPT entrypoint 所必需的最小標準 UI lifecycle / result bridge。
+  - `src/widget/catdesk_dashboard.html` — 僅限最小 OpenAI MCP Apps lifecycle / result bridge
+- **OpenAI MCP Apps 相容能力：** 已部署 production。Global/Thread entrypoint metadata、標準 `ui/initialize` → `ui/notifications/initialized`、`params._meta` tool-result ingestion 與 legacy fallback 均已驗證。ChatGPT UI chrome 是否實際顯示 Global/Thread surface 無法由 assistant tool call 直接觀察，保留為 UI-only 確認項。
 
 除非未來 upstream 架構改變、且確實需要不同的最小實作，其他 CatDesk source 都應保持與 upstream 一致。OpenAI 相容層必須維持 additive：Standard MCP、Hermes client、transport 與 filesystem semantics 都不得依賴它。
 

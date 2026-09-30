@@ -16,15 +16,17 @@ Cloudflare, launchd, code signing, and production activation are deployment conc
 - **Private downstream:** https://github.com/HCH725/CatDesk-custom
 - **Accepted upstream release:** `v0.9.5`
 - **Accepted upstream commit:** `f4f4bcc6a14b87f00d17f102f3006dfd96c0b341`
-- **Accepted downstream release:** `v0.9.5-custom.2`
+- **Accepted downstream release:** `v0.9.5-custom.3`
+- **Accepted downstream commit:** `194368de301586b7871aaa567bc793cee24979c7`
 - **Current production runtime:** `/Users/hong/.local/share/catdesk/runtime/bin/catdesk`
-- **Current production SHA256:** `8c98eb715a9366ce5c3cc3725de609dbd27575916bca33ec05c7f861586612fe`
+- **Current production SHA256:** `4b6130e3deaa0e7316a9c8d5e33c2cb420a1f5be5980b9e1716c358764212d1b`
 - **Stable signing identifier:** `com.hong.catdesk`
 - **Public ingress:** Cloudflare Tunnel, managed outside CatDesk source
-- **Current accepted production source delta vs upstream:** exactly two Rust files:
+- **Current accepted production source delta vs upstream:**
   - `src/mcp.rs`
   - `src/workspace_tools.rs`
-- **OpenAI MCP Apps compatibility candidate:** may additionally touch `src/widget/catdesk_dashboard.html`, but only for the minimal standards-compliant UI lifecycle/result bridge required by ChatGPT entrypoints.
+  - `src/widget/catdesk_dashboard.html` — only the minimal OpenAI MCP Apps lifecycle/result bridge
+- **OpenAI MCP Apps compatibility:** production-enabled. Global/Thread entrypoint metadata, standard `ui/initialize` → `ui/notifications/initialized`, `params._meta` tool-result ingestion, and legacy fallback are validated. ChatGPT UI-chrome rendering of the Global/Thread surfaces is not directly introspectable from assistant tool calls and remains a UI-only confirmation.
 
 All other CatDesk source files should remain upstream-identical unless a future upstream change makes a different minimal implementation strictly necessary. The OpenAI compatibility layer must stay additive: standard MCP behavior, Hermes clients, transport, and filesystem semantics must not depend on it.
 
