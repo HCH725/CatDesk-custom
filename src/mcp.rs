@@ -4880,8 +4880,16 @@ mod tests {
             .and_then(Value::as_array)
             .expect("missing openai/ui entrypoints");
 
-        assert!(entrypoints.iter().any(|entry| entry.get("type").and_then(Value::as_str) == Some("global")));
-        assert!(entrypoints.iter().any(|entry| entry.get("type").and_then(Value::as_str) == Some("thread")));
+        assert!(
+            entrypoints
+                .iter()
+                .any(|entry| entry.get("type").and_then(Value::as_str) == Some("global"))
+        );
+        assert!(
+            entrypoints
+                .iter()
+                .any(|entry| entry.get("type").and_then(Value::as_str) == Some("thread"))
+        );
     }
 
     #[tokio::test]
