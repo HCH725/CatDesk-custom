@@ -6,7 +6,7 @@ Private downstream repository for the CatDesk instance used on Hanqin-ge's Mac.
 
 The design goal is intentionally narrow:
 
-> **official Xeift/CatDesk upstream + the minimum external-filesystem patch**
+> **official Xeift/CatDesk upstream + the minimum external-filesystem patch + an optional thin OpenAI MCP Apps compatibility layer**
 
 Cloudflare, launchd, code signing, and production activation are deployment concerns. They are not CatDesk source customizations.
 
@@ -21,11 +21,12 @@ Cloudflare, launchd, code signing, and production activation are deployment conc
 - **Current production SHA256:** `8c98eb715a9366ce5c3cc3725de609dbd27575916bca33ec05c7f861586612fe`
 - **Stable signing identifier:** `com.hong.catdesk`
 - **Public ingress:** Cloudflare Tunnel, managed outside CatDesk source
-- **Current source delta vs upstream:** exactly two Rust files:
+- **Current accepted production source delta vs upstream:** exactly two Rust files:
   - `src/mcp.rs`
   - `src/workspace_tools.rs`
+- **OpenAI MCP Apps compatibility candidate:** may additionally touch `src/widget/catdesk_dashboard.html`, but only for the minimal standards-compliant UI lifecycle/result bridge required by ChatGPT entrypoints.
 
-All other CatDesk source files should remain upstream-identical unless a future upstream change makes a different minimal implementation strictly necessary.
+All other CatDesk source files should remain upstream-identical unless a future upstream change makes a different minimal implementation strictly necessary. The OpenAI compatibility layer must stay additive: standard MCP behavior, Hermes clients, transport, and filesystem semantics must not depend on it.
 
 ## Why this repository exists
 
@@ -49,7 +50,7 @@ Required behavior:
 - paths outside configured roots must be rejected;
 - `/Volumes/ExpansionDrive` must remain usable for real read/write operations.
 
-This is the only standing CatDesk source customization.
+The external-filesystem contract remains the primary standing CatDesk customization. A second, optional customization is permitted only for thin OpenAI MCP Apps compatibility: namespaced OpenAI entrypoint metadata plus the minimum widget lifecycle/result bridge needed by ChatGPT. Do not vendor `openai/mcp-extensions`, add a parallel framework, or make standard MCP/Hermes depend on this layer.
 
 ## Explicitly not part of CatDesk custom source
 
@@ -107,9 +108,9 @@ When Xeift/CatDesk publishes a new stable release:
 1. Fetch `origin` and `upstream`. Confirm local `main == origin/main` and the worktree is clean.
 2. Read the new upstream release notes and inspect API/schema/runtime changes.
 3. Create a clean candidate from the new upstream stable tag/commit.
-4. Port only the minimum extra-roots behavior still required. Do not copy old custom source wholesale.
+4. Port only the minimum extra-roots behavior still required, plus the optional OpenAI MCP Apps compatibility layer if it is still needed. Do not copy old custom source wholesale.
 5. Prefer deleting downstream code when upstream has absorbed equivalent behavior.
-6. Verify the downstream source diff. The expected default is only `src/mcp.rs` and `src/workspace_tools.rs`; any additional source file requires an explicit justification.
+6. Verify the downstream source diff. The default source delta is `src/mcp.rs` and `src/workspace_tools.rs`. `src/widget/catdesk_dashboard.html` is additionally allowed only when the OpenAI MCP Apps compatibility layer is active and its review record proves the change is limited to standards-compliant UI lifecycle/result handling. Any other source file requires an explicit justification.
 7. Run source validation:
    - `cargo fmt --all -- --check`
    - `cargo check --all-targets`
